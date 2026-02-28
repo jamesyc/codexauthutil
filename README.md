@@ -123,30 +123,8 @@ Profiles are stored in `~/.codexauth/`:
 
 The store directory is created with `chmod 700` and individual token files with `chmod 600`.
 
-## Project structure
-
-```
-codexauthutil/
-├── codexauth.py          # entry point shim (PEP 723, run directly with uv)
-├── pyproject.toml        # packaging for pip install
-├── codexauth/
-│   ├── store.py          # profile read/write and activation
-│   ├── refresh.py        # OAuth token refresh
-│   ├── usage.py          # quota API fetching
-│   ├── display.py        # rich table rendering and interactive menu
-│   └── cli.py            # click commands
-└── tests/
-    ├── conftest.py
-    ├── test_store.py
-    ├── test_refresh.py
-    ├── test_usage.py
-    └── test_cli.py
-```
-
 ## Running tests
 
 ```bash
 uv run --with "pytest,pytest-asyncio,respx" pytest tests/ -v
 ```
-
-34 tests covering store operations, token refresh, usage API responses, and CLI commands end-to-end.
