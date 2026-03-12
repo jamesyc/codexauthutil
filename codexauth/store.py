@@ -39,6 +39,20 @@ def save_profile(name: str, data: dict):
     path.chmod(0o600)
 
 
+def save_profile_from_file(name: str, source_path: Path, preserve_mtime: bool = True):
+    _ensure_store()
+    dest_path = TOKENS_DIR / f"{name}.json"
+    if preserve_mtime:
+        shutil.copy2(source_path, dest_path)
+    else:
+        shutil.copyfile(source_path, dest_path)
+    dest_path.chmod(0o600)
+
+    if not preserve_mtime:
+        dest_path.touch()
+        dest_path.chmod(0o600)
+
+
 def delete_profile(name: str):
     path = TOKENS_DIR / f"{name}.json"
     if not path.exists():

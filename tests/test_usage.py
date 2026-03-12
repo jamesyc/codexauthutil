@@ -1,9 +1,14 @@
 """Tests for codexauth.usage."""
 
+import json
+import os
+
 import pytest
 import respx
 import httpx
 
+import codexauth.usage as usage_module
+import codexauth.store as store_module
 from codexauth.usage import fetch_usage, fetch_all_usage, UsageResult, USAGE_URL
 
 FRESH_PROFILE = {
@@ -72,3 +77,49 @@ async def test_fetch_all_usage():
 
     assert set(results.keys()) == {"work", "personal"}
     assert results["work"].primary_pct == 45
+
+
+@pytest.mark.asyncio
+async def test_fetch_usage_refresh_updates_stored_mtime(monkeypatch, sample_profile):
+    store_module.save_profile("work", sample_profile)
+    stored_path = store_module.TOKENS_DIR / "work.json"
+    os.utime(stored_path, (1_600_000_000, 1_600_000_000))
+
+    stale_profile = dict(sample_profile)
+    stale_profile["tokens"] = dict(sample_profile["tokens"])
+    stale_profile["last_refresh"] = "2000-01-01T00:00:00+00:00"
+
+    async def fake_refresh(profile):
+        refreshed = dict(profile)
+        refreshed["tokens"] = dict(profile["tokens"])
+        refreshed["tokens"]["access_token"] = "new-access-token"
+        refreshed["last_refresh"] = "2026-03-12T00:00:00+00:00"
+        return refreshed
+
+    class DummyResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return USAGE_RESPONSE
+
+    class DummyClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, headers):
+            return DummyResponse()
+
+    monkeypatch.setattr(usage_module, "needs_refresh", lambda profile: True)
+    monkeypatch.setattr(usage_module, "refresh_tokens", fake_refresh)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda timeout=15: DummyClient())
+
+    _, result = await fetch_usage("work", stale_profile)
+
+    assert result.error is None
+    assert stored_path.stat().st_mtime > 1_600_000_000
+    saved = json.loads(stored_path.read_text())
+    assert saved["tokens"]["access_token"] == "new-access-token"

@@ -42,10 +42,12 @@ The project is intentionally lightweight. It is a local tool, not a service, and
 The system is organized into a few focused modules:
 
 - `codexauth/cli.py`: Click-based command definitions and command orchestration.
+- `codexauth/config.py`: `.env` loading and sync-directory resolution.
 - `codexauth/store.py`: Filesystem storage, active profile tracking, and activation logic.
 - `codexauth/usage.py`: Usage retrieval and concurrent usage fetching across profiles.
 - `codexauth/refresh.py`: Refresh-token handling for ChatGPT OAuth credentials.
 - `codexauth/display.py`: Rich-based table rendering and interactive prompt behavior.
+- `codexauth/sync.py`: import/export candidate discovery, modified-time formatting, and metadata-preserving file copies.
 
 This separation keeps side effects contained:
 
@@ -100,7 +102,8 @@ Within that external directory, profile files are expected to be stored as:
 
 - Reads an auth file from `--file` or defaults to `~/.codex/auth.json`.
 - Performs a lightweight validity check by requiring `auth_mode` or `tokens`.
-- Saves the profile under the given name.
+- Copies the source auth file into local storage under the given name.
+- Preserves the source file's modified timestamp so imported profile age stays meaningful.
 
 ### `codexauth use <name>`
 
@@ -182,6 +185,7 @@ This keeps configuration simple and avoids adding another persistent config syst
 5. For profiles that do not exist locally, import directly.
 6. For profiles that already exist locally, show local and external modified times and ask whether to overwrite.
 7. Copy selected profiles into `~/.codexauth/tokens`.
+8. Preserve the source file's modified timestamp on the imported local copy.
 
 Key UX requirement:
 
@@ -198,8 +202,21 @@ Key UX requirement:
 5. For profiles that do not exist externally, export directly.
 6. For profiles that already exist externally, show local and external modified times and ask whether to overwrite.
 7. Copy selected profiles into the external directory.
+8. Preserve the source file's modified timestamp on the exported copy.
 
 The export flow mirrors the import flow so users only need to learn one mental model.
+
+### Modified Time Semantics
+
+The implementation uses file modified time as a lightweight signal for profile provenance during sync decisions, so operations intentionally do not all behave the same way:
+
+- `add` preserves the source file's modified time, whether the source is `--file` or the default `~/.codex/auth.json`
+- `import` preserves the external source file's modified time
+- `export` preserves the local source file's modified time
+- token refresh writes update modified time because the local stored profile contents genuinely changed
+- `activate` does not rewrite the stored profile in `~/.codexauth/tokens`, so that stored file keeps its existing modified time
+
+This gives import/export flows stable timestamps while still allowing local token refreshes to indicate a real local update.
 
 ### Overwrite Decision Model
 
@@ -240,7 +257,7 @@ On a successful refresh:
 
 - `access_token`, `refresh_token`, and `id_token` are updated if present in the response
 - `last_refresh` is set to the current UTC timestamp
-- the updated profile is saved back to local storage
+- the updated profile is saved back to local storage with a fresh modified timestamp
 
 On any failure, the original profile is preserved. This favors resilience over strict error propagation.
 
@@ -292,6 +309,8 @@ The existing test suite covers the main functional layers:
 
 - CLI behavior and command output
 - profile persistence and activation behavior
+- modified-time preservation for `add`, `import`, and `export`
+- modified-time updates for token refresh saves
 - token refresh decision logic
 - usage fetch success and failure cases
 
