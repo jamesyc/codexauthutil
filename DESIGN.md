@@ -210,6 +210,10 @@ reconciliation first, refresh second, then render the list.
 3. If they differ and both still look like the same auth identity,
    update `~/.codexauth/tokens/<active>.json` from `~/.codex/auth.json`
    before any new activation proceeds.
+4. When reconciliation writes local `~/.codex/auth.json` back into store and a
+   sync directory is configured, interactive commands should offer to run
+   `push` so that refreshed credentials can be propagated to other machines.
+   `list --no-interactive` should skip this prompt.
 
 Identity matching should be conservative to avoid accidentally writing one
 account over another. A reasonable baseline is:
@@ -297,6 +301,9 @@ state:
 - that the update source was `~/.codex/auth.json`
 
 This makes externally-triggered refresh sync visible instead of implicit.
+If the update came from local `~/.codex/auth.json` and sync is configured, the
+CLI should also offer a follow-up `push`. The CLI should not accept a "q" or 
+empty newline as a most-likely accidental response.
 
 ## Manual OAuth Bootstrap Design
 

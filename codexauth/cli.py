@@ -95,7 +95,7 @@ def list_cmd(no_interactive, no_usage):
 
 def _show_profiles(no_interactive: bool, no_usage: bool) -> None:
     """Render stored profiles and optionally prompt for activation."""
-    _run_preflight_reconciliation(prompt_on_unsafe=False)
+    reconcile_result = _run_preflight_reconciliation(prompt_on_unsafe=False)
 
     profiles = list_profiles()
     if not profiles:
@@ -114,6 +114,7 @@ def _show_profiles(no_interactive: bool, no_usage: bool) -> None:
             usage_map = asyncio.run(fetch_all_usage(all_data))
 
     console.print(render_table(profiles, all_data, usage_map, active))
+    _maybe_offer_push_after_reconcile(reconcile_result, allow_prompt=not no_interactive)
 
     if not no_interactive:
         choice = interactive_prompt(profiles)
@@ -132,8 +133,9 @@ def _show_profiles(no_interactive: bool, no_usage: bool) -> None:
 @click.argument("name")
 def use_cmd(name):
     """Activate a stored profile by copying it into ~/.codex/auth.json."""
-    _run_preflight_reconciliation(prompt_on_unsafe=True)
+    reconcile_result = _run_preflight_reconciliation(prompt_on_unsafe=True)
     _activate(name)
+    _maybe_offer_push_after_reconcile(reconcile_result, allow_prompt=True)
 
 
 @cli.command(
@@ -239,7 +241,9 @@ def status_cmd():
 )
 def reconcile_active_cmd():
     """Reconcile the active stored profile with ~/.codex/auth.json."""
-    _report_reconcile_result(reconcile_active_to_store(prompt_on_unsafe=True))
+    result = reconcile_active_to_store(prompt_on_unsafe=True)
+    _report_reconcile_result(result)
+    _maybe_offer_push_after_reconcile(result, allow_prompt=True)
 
 
 @cli.command(
@@ -287,7 +291,7 @@ def export_cmd():
 def pull_cmd():
     """Run git pull, then import profiles from CODEXAUTH_SYNC_DIR."""
     sync_dir = _require_sync_dir()
-    _run_preflight_reconciliation(prompt_on_unsafe=True)
+    preflight_result = _run_preflight_reconciliation(prompt_on_unsafe=True)
     try:
         message = pull_sync_repo(sync_dir)
     except FileNotFoundError as e:
@@ -298,7 +302,14 @@ def pull_cmd():
     if message:
         console.print(f"[dim]{message}[/dim]")
     imported_names = _run_import(sync_dir)
-    _report_reconcile_result(reconcile_imported_active_profile(imported_names))
+    post_import_result = reconcile_imported_active_profile(imported_names)
+    _report_reconcile_result(post_import_result)
+    active = get_active()
+    imported_active = bool(active and active in imported_names)
+    push_candidate = (
+        post_import_result if imported_active else preflight_result
+    )
+    _maybe_offer_push_after_reconcile(push_candidate, allow_prompt=True)
 
 
 @cli.command(
@@ -319,21 +330,7 @@ def pull_cmd():
 def push_cmd():
     """Export profiles, then run git add/commit/push in CODEXAUTH_SYNC_DIR."""
     sync_dir = _require_sync_dir()
-    _run_export(sync_dir)
-    try:
-        message = push_sync_repo(sync_dir)
-    except FileNotFoundError as e:
-        raise click.ClickException(str(e))
-    except GitCommandError as e:
-        raise click.ClickException(e.message)
-
-    if message == "No changes to commit.":
-        console.print(f"[dim]{message}[/dim]")
-        return
-
-    console.print(f"[green]✓[/green] Pushed sync repo [bold]{sync_dir}[/bold]")
-    if message:
-        console.print(f"[dim]{message}[/dim]")
+    _push_sync_changes(sync_dir)
 
 
 def _activate(name: str):
@@ -421,13 +418,57 @@ def _report_reconcile_result(result) -> None:
         console.print(f"[yellow]![/yellow] {result.message}")
 
 
-def _run_preflight_reconciliation(prompt_on_unsafe: bool) -> None:
+def _run_preflight_reconciliation(prompt_on_unsafe: bool):
     result = reconcile_active_to_store(prompt_on_unsafe=prompt_on_unsafe)
     if result.status == "updated":
         console.print(f"[green]✓[/green] {result.message}")
-        return
-    if result.status == "warning":
+    elif result.status == "warning":
         console.print(f"[yellow]![/yellow] {result.message}")
-        return
-    if result.status == "unsafe":
+    elif result.status == "unsafe":
         console.print(f"[yellow]![/yellow] {result.message}")
+    return result
+
+
+def _maybe_offer_push_after_reconcile(result, allow_prompt: bool) -> None:
+    if not allow_prompt or not result or not result.store_updated_from_auth:
+        return
+
+    sync_dir = get_sync_dir()
+    if sync_dir is None:
+        return
+
+    banner = "#" * 48
+    console.print(f"[bold red]{banner}[/bold red]")
+    console.print("[bold red]##### An app updated local auth.json       #####[/bold red]")
+    console.print(f"[bold red]{banner}[/bold red]")
+    console.print(f"##### Updating local store now...          #####")
+    console.print(f"##### Successfully reconciled local store. #####")
+    if _confirm_yes_no("Reconciliation updated local store. Push these changes now? [y/N]: "):
+        _push_sync_changes(sync_dir)
+
+
+def _push_sync_changes(sync_dir: Path) -> None:
+    _run_export(sync_dir)
+    try:
+        message = push_sync_repo(sync_dir)
+    except FileNotFoundError as e:
+        raise click.ClickException(str(e))
+    except GitCommandError as e:
+        raise click.ClickException(e.message)
+
+    if message == "No changes to commit.":
+        console.print(f"[dim]{message}[/dim]")
+        return
+
+    console.print(f"[green]✓[/green] Pushed sync repo [bold]{sync_dir}[/bold]")
+    if message:
+        console.print(f"[dim]{message}[/dim]")
+
+
+def _confirm_yes_no(prompt: str) -> bool:
+    while True:
+        value = click.prompt(prompt, prompt_suffix="", default="", show_default=False).strip().lower()
+        if value in {"y", "yes"}:
+            return True
+        if value in {"n", "no"}:
+            return False

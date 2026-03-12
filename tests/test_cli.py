@@ -5,6 +5,7 @@ import os
 import stat
 import subprocess
 import base64
+import importlib
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -17,6 +18,8 @@ import codexauth.git_sync as git_sync_module
 import codexauth.oauth as oauth_module
 import codexauth.store as store_module
 from codexauth.sync import format_modified
+
+cli_module = importlib.import_module("codexauth.cli")
 
 
 @pytest.fixture
@@ -248,7 +251,8 @@ def test_use_not_found(runner):
     assert "not found" in result.output.lower()
 
 
-def test_use_prompts_on_unsafe_reconciliation(runner):
+def test_use_prompts_on_unsafe_reconciliation(runner, monkeypatch):
+    monkeypatch.setattr(cli_module, "get_sync_dir", lambda: None)
     local = {
         "auth_mode": "chatgpt",
         "OPENAI_API_KEY": None,
@@ -280,6 +284,120 @@ def test_use_prompts_on_unsafe_reconciliation(runner):
     assert store_module.load_profile("work")["tokens"]["access_token"] == "auth-access"
 
 
+def test_use_offers_push_after_reconciliation_when_sync_configured(runner, monkeypatch, tmp_path):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    profile = {
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": None,
+        "tokens": {
+            "id_token": _jwt({"iss": "https://auth.example", "sub": "user-1"}),
+            "access_token": "stored-access",
+            "refresh_token": "refresh",
+            "account_id": "acct-1",
+        },
+        "last_refresh": "2025-01-01T00:00:00+00:00",
+    }
+    store_module.save_profile("work", profile)
+    store_module.save_profile("other", profile)
+    store_module.set_active("work")
+    auth = json.loads(json.dumps(profile))
+    auth["tokens"]["access_token"] = "auth-access"
+    store_module.save_codex_auth(auth)
+
+    pushed = []
+
+    def fake_push(sync_path):
+        pushed.append(sync_path)
+
+    monkeypatch.setattr(cli_module, "_push_sync_changes", fake_push)
+
+    result = runner.invoke(cli, ["use", "other"], input="y\n")
+
+    assert result.exit_code == 0
+    assert "##### Successfully reconciled local store. #####" in result.output
+    assert "Push these changes now?" in result.output
+    assert pushed == [sync_dir]
+
+
+def test_use_push_prompt_reprompts_on_empty_or_q(runner, monkeypatch, tmp_path):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    profile = {
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": None,
+        "tokens": {
+            "id_token": _jwt({"iss": "https://auth.example", "sub": "user-1"}),
+            "access_token": "stored-access",
+            "refresh_token": "refresh",
+            "account_id": "acct-1",
+        },
+        "last_refresh": "2025-01-01T00:00:00+00:00",
+    }
+    store_module.save_profile("work", profile)
+    store_module.save_profile("other", profile)
+    store_module.set_active("work")
+    auth = json.loads(json.dumps(profile))
+    auth["tokens"]["access_token"] = "auth-access"
+    store_module.save_codex_auth(auth)
+
+    pushed = []
+
+    def fake_push(sync_path):
+        pushed.append(sync_path)
+
+    monkeypatch.setattr(cli_module, "_push_sync_changes", fake_push)
+
+    result = runner.invoke(cli, ["use", "other"], input="\nq\ny\n")
+
+    assert result.exit_code == 0
+    assert result.output.count("Reconciliation updated local store. Push these changes now? [y/N]:") == 3
+    assert pushed == [sync_dir]
+
+
+def test_use_push_prompt_accepts_uppercase_and_yes_no_variants(runner, monkeypatch, tmp_path):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    profile = {
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": None,
+        "tokens": {
+            "id_token": _jwt({"iss": "https://auth.example", "sub": "user-1"}),
+            "access_token": "stored-access",
+            "refresh_token": "refresh",
+            "account_id": "acct-1",
+        },
+        "last_refresh": "2025-01-01T00:00:00+00:00",
+    }
+    store_module.save_profile("work", profile)
+    store_module.save_profile("other", profile)
+    store_module.set_active("work")
+    auth = json.loads(json.dumps(profile))
+    auth["tokens"]["access_token"] = "auth-access"
+    store_module.save_codex_auth(auth)
+
+    pushed = []
+
+    def fake_push(sync_path):
+        pushed.append(sync_path)
+
+    monkeypatch.setattr(cli_module, "_push_sync_changes", fake_push)
+
+    result = runner.invoke(cli, ["use", "other"], input="YES\n")
+
+    assert result.exit_code == 0
+    assert pushed == [sync_dir]
+
+
 def test_remove(runner, saved_profile):
     result = runner.invoke(cli, ["remove", "work"])
     assert result.exit_code == 0
@@ -309,7 +427,8 @@ def test_list_shows_profiles(runner, saved_profile):
     assert "work" in result.output
 
 
-def test_list_no_usage_reconciles_active_profile(runner):
+def test_list_no_usage_reconciles_active_profile(runner, monkeypatch):
+    monkeypatch.setattr(cli_module, "get_sync_dir", lambda: None)
     profile = {
         "auth_mode": "chatgpt",
         "OPENAI_API_KEY": None,
@@ -332,6 +451,36 @@ def test_list_no_usage_reconciles_active_profile(runner):
     assert result.exit_code == 0
     assert "Reconciled active profile 'work'" in result.output
     assert store_module.load_profile("work")["tokens"]["access_token"] == "auth-access"
+
+
+def test_list_no_interactive_skips_push_prompt_after_reconciliation(runner, monkeypatch, tmp_path):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    profile = {
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": None,
+        "tokens": {
+            "id_token": _jwt({"iss": "https://auth.example", "sub": "user-1"}),
+            "access_token": "stored-access",
+            "refresh_token": "refresh",
+            "account_id": "acct-1",
+        },
+        "last_refresh": "2025-01-01T00:00:00+00:00",
+    }
+    store_module.save_profile("work", profile)
+    store_module.set_active("work")
+    auth = json.loads(json.dumps(profile))
+    auth["tokens"]["access_token"] = "auth-access"
+    store_module.save_codex_auth(auth)
+
+    monkeypatch.setattr(cli_module.click, "confirm", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("confirm should not be called")))
+
+    result = runner.invoke(cli, ["list", "--no-usage", "--no-interactive"])
+
+    assert result.exit_code == 0
 
 
 def test_import_requires_sync_dir(runner, monkeypatch, tmp_path):
@@ -606,7 +755,7 @@ def test_pull_reconciles_active_profile_before_git_pull(runner, monkeypatch, tmp
 
     monkeypatch.setattr(git_sync_module.subprocess, "run", fake_run)
 
-    result = runner.invoke(cli, ["pull"])
+    result = runner.invoke(cli, ["pull"], input="n\n")
 
     assert result.exit_code == 0
     assert "Reconciled active profile 'work'" in result.output

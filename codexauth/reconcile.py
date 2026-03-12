@@ -19,6 +19,7 @@ from codexauth.store import ProfileNotFoundError
 class ReconcileResult:
     status: str
     message: str
+    store_updated_from_auth: bool = False
 
 
 def _load_json(path: Path) -> dict:
@@ -111,6 +112,7 @@ def _apply_choice(
         return ReconcileResult(
             "updated",
             f"Updated stored profile '{name}' from {auth_source_label}.",
+            store_updated_from_auth=True,
         )
     return ReconcileResult("warning", f"Skipped reconciliation for active profile '{name}'.")
 
@@ -181,10 +183,12 @@ def _reconcile_pair(
             return ReconcileResult(
                 "updated",
                 f"Updated imported active profile '{name}' from ~/.codex/auth.json.",
+                store_updated_from_auth=True,
             )
         return ReconcileResult(
             "updated",
             f"Reconciled active profile '{name}' from ~/.codex/auth.json into store.",
+            store_updated_from_auth=True,
         )
 
     choice = _choose_copy(
