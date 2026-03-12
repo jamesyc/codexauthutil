@@ -198,7 +198,11 @@ without updating the stored named profile. That can lead to stale stored tokens
 being reactivated later.
 
 To support external refreshes safely, the design should add an explicit
-reconciliation step before replacing `~/.codex/auth.json`:
+reconciliation step before any command that may write refreshed token state or
+replace `~/.codex/auth.json`. In practice, that means running reconciliation at
+the start of `list` (including `list --no-usage` and the default no-args
+invocation) and at the start of `use`. For `list`, the order should be:
+reconciliation first, refresh second, then render the list.
 
 1. Read the active marker (`~/.codexauth/active`) if present.
 2. If the active marker points to an existing stored profile, compare
@@ -210,13 +214,45 @@ reconciliation step before replacing `~/.codex/auth.json`:
 Identity matching should be conservative to avoid accidentally writing one
 account over another. A reasonable baseline is:
 
-- `auth_mode` must match
-- if present on both sides, `tokens.account_id` must match
-- if present on both sides, stable JWT subject claims from `id_token`
-  should match
+- if present on both sides, `tokens.account_id` is authoritative and must match
+- if `tokens.account_id` is missing on either side, `(iss, sub)` from
+  `id_token` may be used as a backup identity check, and both fields must match
 
-When identity cannot be confirmed, the tool should not auto-overwrite. Instead
-it should surface a clear warning and require an explicit command to reconcile.
+If an overwrite sees that both `tokens.account_id` and `(iss, sub)` from
+`id_token` disagree, the tool should surface the update and ask the user to
+confirm before replacing the saved profile; otherwise it can be an automatic
+update. When identity cannot be confirmed, the tool should not auto-overwrite.
+Instead it should surface a clear warning and require an explicit command to
+reconcile.
+
+We also have to handle external refreshes for the `pull` command:
+
+1. Before running `git pull`, first run the normal active-profile
+   reconciliation step so any local external refresh already present in
+   `~/.codex/auth.json` is written back to `~/.codexauth/tokens/<active>.json`
+   before sync starts.
+
+2. After `git pull`, import profiles from the sync directory into local store as
+   usual.
+
+3. If an imported profile is not the currently active local profile, stop after
+   updating the stored profile.
+
+4. If an imported profile is the currently active local profile, compare the
+   imported `~/.codexauth/tokens/<active>.json` with local `~/.codex/auth.json`.
+   If identity matches, automatically update the older copy to match the newer
+   one:
+   - if `tokens.account_id` is present on both sides and matches, treat that as
+     authoritative
+   - otherwise, if `(iss, sub)` from `id_token` is present on both sides and
+     matches, treat that as a match
+   - if modified times are equal but contents differ, do not guess which side is
+     newer; require confirmation instead
+
+5. If identity does not match, or cannot be confirmed from the available
+   fields, do not auto-overwrite. Surface a warning and require the user to
+   confirm which copy should win before replacing the saved profile or
+   `~/.codex/auth.json`.
 
 ### Proposed Commands
 
@@ -227,10 +263,8 @@ automatic pre-activation safeguard:
   - compares `~/.codex/auth.json` with the currently active stored profile
   - writes back to the store only when identity checks pass
   - prints whether an update occurred or no differences were found
-
-- `codexauth add --from-active <name>` (optional future extension)
-  - snapshots the current `~/.codex/auth.json` into a named profile
-  - useful when identity checks fail but the user still wants a controlled save
+  - do not put this in --help or README, this is for testing
+  - have correct errors if identity checks fail
 
 ### Failure and Safety Rules
 
@@ -240,10 +274,18 @@ The reconciliation path should prioritize credential safety:
 - missing active marker: no-op with clear message
 - active marker points to missing profile file: warning and no write
 - invalid JSON on either side: fail with concise parse error
+- missing or undecodable `id_token`: do not prompt the user to delete tokens;
+  instead treat identity as unconfirmed unless `tokens.account_id` is sufficient
+  on its own
 - identity mismatch: no write unless user explicitly forces an overwrite
 
 All writes should preserve existing file permissions (`0600`) and update mtime,
 because the stored profile contents genuinely changed.
+
+Reconciliation should also be a strict no-op when the two copies are already
+byte-identical. In that case, the tool should not rewrite either file and
+should not change mtime. This avoids churn after a `pull` updates the active
+local state and a later `list` or `use` checks the same profile again.
 
 ### Observability
 
@@ -251,7 +293,7 @@ When reconciliation changes a stored profile, the CLI output should explicitly
 state:
 
 - which profile was updated
-- which fields changed at a high level (for example, tokens refreshed)
+- which fields changed at a high level (for example, tokens refreshed). Print token class changes. 
 - that the update source was `~/.codex/auth.json`
 
 This makes externally-triggered refresh sync visible instead of implicit.
@@ -381,10 +423,16 @@ The pull command should behave as follows:
 2. Fail with a clear setup message if the directory is not configured.
 3. Fail with a clear error if the directory does not exist.
 4. Fail with a clear error if the directory is not inside a Git working tree.
-5. Run `git pull`.
-6. Import all profiles from the sync directory.
-7. Prompt only for overwrite cases during import.
-8. Print a success message summarizing what happened.
+5. Reconcile the currently active local profile first, if possible, so local
+   external refreshes are captured in store before sync begins.
+6. Run `git pull`.
+7. Import all profiles from the sync directory.
+8. For any imported profile that is currently active locally, reconcile the
+   imported stored copy against `~/.codex/auth.json` before deciding whether one
+   copy should replace the other.
+9. Prompt only for overwrite cases during import or for reconciliation cases
+   where identity cannot be safely confirmed or recency is ambiguous.
+10. Print a success message summarizing what happened.
 
 ### Push Flow
 
@@ -453,6 +501,22 @@ The design should not attempt to resolve conflicts or modify the repository stat
 After a successful `git pull`, the subsequent import step may still hit overwrite prompts. Users may accept some overwrites and decline others, producing a partial local update.
 
 This is acceptable because overwrite confirmation is more important than forcing the local store to mirror the sync directory exactly.
+
+#### Pull sees concurrent drift on both sides
+
+It is possible for local `~/.codex/auth.json` to have been refreshed externally
+while a newer version of the same profile also arrives from another machine via
+`pull`.
+
+The design should handle this in two stages:
+
+- reconcile local active state into store before `git pull`
+- then import remote changes and reconcile the active imported profile against
+  local `~/.codex/auth.json`
+
+This ordering avoids losing a local external refresh before sync begins, while
+still allowing an imported newer active profile to update the local active auth
+file afterward when identity checks pass.
 
 #### No exported changes
 
@@ -602,7 +666,11 @@ The refresh subsystem exists to avoid usage lookups failing due to expired acces
 
 On a successful refresh:
 
-- `access_token`, `refresh_token`, and `id_token` are updated if present in the response
+- `access_token` must be replaced from the refresh response
+- `refresh_token` and `id_token` are replaced only when present in the refresh
+  response; if either field is omitted, the previously stored value is retained
+- `tokens.account_id` is preserved unless the implementation explicitly gains a
+  trusted way to refresh it from provider data
 - `last_refresh` is set to the current UTC timestamp
 - the updated profile is saved back to local storage with a fresh modified timestamp
 
