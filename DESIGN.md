@@ -137,6 +137,22 @@ Within that external directory, profile files are expected to be stored as:
 - When a selected export would overwrite an existing external profile, shows both sides' last modified timestamps before confirmation.
 - Supports exporting only a subset of local profiles.
 
+### `codexauth pull`
+
+- Reads the external profile directory path from `.env`.
+- Treats that directory as a Git working tree used to fetch remote profile changes.
+- Changes into the sync directory and runs `git pull`.
+- Is intended to be run before `codexauth import`, but remains a separate command so users control when remote changes are brought into the sync directory.
+
+### `codexauth push`
+
+- Reads the external profile directory path from `.env`.
+- Treats that directory as a Git working tree used to publish exported profiles.
+- Changes into the sync directory and runs `git add .`.
+- Creates a commit with a default message describing the exported-profile update.
+- Runs `git push` to publish the commit to the configured remote.
+- Is intended to be run after `codexauth export`, but remains a separate command so users can review changes before publishing.
+
 ## Activation Flow
 
 Profile activation is the core operation:
@@ -205,6 +221,183 @@ Key UX requirement:
 8. Preserve the source file's modified timestamp on the exported copy.
 
 The export flow mirrors the import flow so users only need to learn one mental model.
+
+## Git Sync Design
+
+The Git sync feature extends the sync-directory workflow by assuming that the external profile directory may also be a Git repository. The goal is to support two lightweight, explicit workflows:
+
+1. inbound: run `codexauth pull`, then `codexauth import`
+2. outbound: run `codexauth export`, then `codexauth push`
+
+This separation keeps import/export independent from Git transport. Users can inspect repository changes before importing or publishing, while still having small convenience commands for the Git steps.
+
+### Pull Flow
+
+The pull command should behave as follows:
+
+1. Read the external profile directory from `.env`.
+2. Fail with a clear setup message if the directory is not configured.
+3. Fail with a clear error if the directory does not exist.
+4. Fail with a clear error if the directory is not inside a Git working tree.
+5. Run `git pull`.
+6. Print a success message summarizing what happened.
+
+### Push Flow
+
+The push command should behave as follows:
+
+1. Read the external profile directory from `.env`.
+2. Fail with a clear setup message if the directory is not configured.
+3. Fail with a clear error if the directory does not exist.
+4. Fail with a clear error if the directory is not inside a Git working tree.
+5. Run `git add .` from that directory.
+6. Check whether staging produced any changes.
+7. If there are no staged changes, print a no-op message and stop without committing or pushing.
+8. If there are staged changes, run `git commit -m <message>`.
+9. Run `git push`.
+10. Print a success message summarizing what happened.
+
+### Commit Message Strategy
+
+The default commit message should be deterministic and specific enough to explain the origin of the change set. A good baseline is something like:
+
+- `Update exported codexauth profiles`
+
+This keeps history readable without overfitting the message to a specific export selection. A future extension could allow a custom message flag, but the initial design does not require one.
+
+### Why Separate `pull`/`push` from `import`/`export`?
+
+Keeping Git transport separate from profile copy operations has a few benefits:
+
+- users can review the diff before publishing secrets-related changes
+- users can pull remote changes without immediately importing them
+- users can export locally even when offline or when Git remotes are unavailable
+- users can import from the sync directory even when Git remotes are unavailable
+- failed Git operations do not make import/export themselves look unreliable
+- the command model stays composable: pull then import, or export then push
+
+### Edge Cases and Failure Modes
+
+The Git sync flow introduces several important edge cases that should be handled explicitly.
+
+#### Missing `.env` configuration
+
+If `CODEXAUTH_SYNC_DIR` is not present, the command should fail with the same clear setup guidance used by import/export.
+
+#### Sync directory does not exist
+
+If the configured sync directory path does not exist yet, `push` should fail rather than creating it. Unlike `export`, this command is specifically about publishing an existing Git working tree.
+
+#### Sync directory is not a Git repository
+
+The configured directory may exist but not contain a `.git` directory, or it may not be part of any working tree. In that case, the command should stop before staging files and explain that the sync directory must be a Git repository.
+
+#### Pull failure
+
+If `git pull` fails, the command should surface the Git error output and exit with failure.
+
+This may happen because of:
+
+- authentication failures
+- network failures
+- merge conflicts
+- local working tree changes preventing pull
+- remote branch or tracking configuration problems
+
+The design should not attempt to resolve conflicts or modify the repository state automatically.
+
+#### No exported changes
+
+If `git add .` is successful but there is nothing to commit, the command should not treat that as an error. It should print a message such as "No changes to commit" and exit successfully without calling `git push`.
+
+This case matters because users may routinely run:
+
+1. `codexauth export`
+2. `codexauth push`
+
+even when the export did not materially change any files.
+
+#### Untracked or unrelated files in the sync directory
+
+Because the requested workflow explicitly stages with `git add .`, the command will stage all changes in the sync directory, not only `*.json` profile files. That includes:
+
+- new profile files
+- modified profile files
+- deleted tracked files
+- any unrelated untracked or modified files already present in the sync directory
+
+This is an intentional tradeoff in favor of matching the user's stated Git workflow exactly. The design should document this clearly so the behavior is not surprising.
+
+If a narrower scope is needed later, a future version could stage only profile files or only files changed by the most recent export.
+
+#### Pre-existing staged changes
+
+If the sync repository already has files staged before `codexauth push` runs, `git add .` will preserve and potentially expand that staged set. The resulting commit may therefore include changes not created by `codexauth export`.
+
+The initial design accepts this because the command is acting as a thin wrapper around standard Git commands, not as a full repository state manager. This should be documented as an operator responsibility.
+
+#### Commit failure
+
+If `git commit` fails after staging changes, the command should surface the Git error output and stop without attempting `git push`.
+
+Examples include:
+
+- missing user.name or user.email configuration
+- commit hooks rejecting the change
+- repository policy checks failing
+
+The staged changes should be left intact so the user can inspect or retry manually.
+
+#### Push failure
+
+If `git push` fails, the command should surface the Git error output and exit with failure. The local commit will likely still exist, and the design should not attempt rollback.
+
+This may happen because of:
+
+- authentication failures
+- network failures
+- non-fast-forward rejections
+- branch protection or remote hook failures
+
+Avoiding rollback keeps the implementation simple and avoids destructive Git behavior.
+
+#### Secrets and publication risk
+
+The sync directory contains credential-bearing JSON files. A Git publish command makes it easier to propagate those files, so the design must explicitly acknowledge that:
+
+- the tool does not redact or encrypt profile files before commit
+- pushing the repository may expose credentials to anyone with access to the remote
+- safe use depends on the user intentionally choosing a private, trusted repository
+
+This risk already exists with export, but `push` makes publication one step easier, so the documentation should call it out directly.
+
+### Error Handling Strategy for Git Commands
+
+The Git pull/push commands should use a straightforward subprocess wrapper:
+
+- capture stdout/stderr for each Git invocation
+- treat non-zero exit status as a user-facing command failure
+- include the failing Git subcommand in the error message
+- avoid shell invocation when possible so arguments are passed directly
+
+This keeps the implementation understandable while still producing useful diagnostics.
+
+### Testing Strategy for Git Sync
+
+Tests for the Git sync features should cover:
+
+- missing sync directory configuration
+- configured path that does not exist
+- configured path that is not a Git repository
+- successful `git pull`
+- failed `git pull`
+- successful no-op publish when there are no changes
+- successful `add` -> `commit` -> `push` flow
+- commit failure stopping before push
+- push failure surfacing an error after a successful commit
+- default commit message formatting
+
+These tests can mock subprocess execution rather than requiring a real remote repository.
 
 ### Modified Time Semantics
 
@@ -287,6 +480,7 @@ Known limitations:
 
 - profile contents are stored unencrypted
 - backups are also stored locally and unencrypted
+- exported profiles may be committed and pushed to a Git remote without additional protection
 - the tool trusts the structure of imported auth JSON beyond a minimal validation check
 
 For a local developer utility, this is a pragmatic tradeoff, but it should be documented clearly for users.

@@ -3,12 +3,14 @@
 import json
 import os
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
 from codexauth.cli import cli
+import codexauth.git_sync as git_sync_module
 import codexauth.store as store_module
 
 
@@ -26,6 +28,8 @@ def test_help(runner):
     assert "use" in result.output
     assert "remove" in result.output
     assert "export" in result.output
+    assert "pull" in result.output
+    assert "push" in result.output
     assert "status" in result.output
 
 
@@ -209,3 +213,139 @@ def test_export_overwrite_can_confirm(runner, saved_profile, monkeypatch, tmp_pa
     assert "2023-11-14" in result.output
     assert "2020-09-13" in result.output
     assert json.loads(existing.read_text())["auth_mode"] == "chatgpt"
+
+
+def test_pull_requires_git_repo(runner, monkeypatch, tmp_path):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(cli, ["pull"])
+
+    assert result.exit_code != 0
+    assert "rev-parse --is-inside-work-tree failed" in result.output
+
+
+def test_pull_success(runner, monkeypatch, tmp_path):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    calls = []
+
+    def fake_run(cmd, cwd, capture_output, text, check):
+        calls.append((cmd, cwd))
+        if cmd == ["git", "rev-parse", "--is-inside-work-tree"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="true\n", stderr="")
+        if cmd == ["git", "pull"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="Already up to date.\n", stderr="")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    monkeypatch.setattr(git_sync_module.subprocess, "run", fake_run)
+
+    result = runner.invoke(cli, ["pull"])
+
+    assert result.exit_code == 0
+    assert "Pulled sync repo" in result.output
+    assert "Already up to date." in result.output
+    assert calls == [
+        (["git", "rev-parse", "--is-inside-work-tree"], sync_dir),
+        (["git", "pull"], sync_dir),
+    ]
+
+
+def test_push_no_changes_is_success(runner, monkeypatch, tmp_path):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    calls = []
+
+    def fake_run(cmd, cwd, capture_output, text, check):
+        calls.append((cmd, cwd))
+        if cmd == ["git", "rev-parse", "--is-inside-work-tree"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="true\n", stderr="")
+        if cmd == ["git", "add", "."]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd == ["git", "diff", "--cached", "--quiet"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    monkeypatch.setattr(git_sync_module.subprocess, "run", fake_run)
+
+    result = runner.invoke(cli, ["push"])
+
+    assert result.exit_code == 0
+    assert "No changes to commit." in result.output
+    assert "Pushed sync repo" not in result.output
+
+
+def test_push_success(runner, monkeypatch, tmp_path):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    calls = []
+
+    def fake_run(cmd, cwd, capture_output, text, check):
+        calls.append((cmd, cwd))
+        if cmd == ["git", "rev-parse", "--is-inside-work-tree"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="true\n", stderr="")
+        if cmd == ["git", "add", "."]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd == ["git", "diff", "--cached", "--quiet"]:
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+        if cmd == ["git", "commit", "-m", "Update exported codexauth profiles"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="[main abc123] Update exported codexauth profiles\n", stderr="")
+        if cmd == ["git", "push"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="pushed\n", stderr="")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    monkeypatch.setattr(git_sync_module.subprocess, "run", fake_run)
+
+    result = runner.invoke(cli, ["push"])
+
+    assert result.exit_code == 0
+    assert "Pushed sync repo" in result.output
+    assert "pushed" in result.output
+    assert calls == [
+        (["git", "rev-parse", "--is-inside-work-tree"], sync_dir),
+        (["git", "add", "."], sync_dir),
+        (["git", "diff", "--cached", "--quiet"], sync_dir),
+        (["git", "commit", "-m", "Update exported codexauth profiles"], sync_dir),
+        (["git", "push"], sync_dir),
+    ]
+
+
+def test_push_commit_failure_stops_before_push(runner, monkeypatch, tmp_path):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    calls = []
+
+    def fake_run(cmd, cwd, capture_output, text, check):
+        calls.append((cmd, cwd))
+        if cmd == ["git", "rev-parse", "--is-inside-work-tree"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="true\n", stderr="")
+        if cmd == ["git", "add", "."]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd == ["git", "diff", "--cached", "--quiet"]:
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+        if cmd == ["git", "commit", "-m", "Update exported codexauth profiles"]:
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="missing user.email\n")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    monkeypatch.setattr(git_sync_module.subprocess, "run", fake_run)
+
+    result = runner.invoke(cli, ["push"])
+
+    assert result.exit_code != 0
+    assert "git commit -m Update exported codexauth profiles failed" in result.output
+    assert "missing user.email" in result.output
+    assert (["git", "push"], sync_dir) not in calls

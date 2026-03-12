@@ -48,6 +48,8 @@ Or save from a specific file:
 ./codexauth.py add work --file /path/to/work-auth.json
 ```
 
+`add` preserves the source file's modified timestamp, which is useful when comparing local and synced copies later.
+
 ### List profiles
 
 Shows all profiles with live quota usage, then prompts you to activate one:
@@ -95,6 +97,81 @@ This copies the profile to `~/.codex/auth.json` and backs up the previous file t
 ./codexauth.py remove personal
 ```
 
+### Configure sync import/export
+
+`import` and `export` read a sync directory from a repo-local `.env` file:
+
+```bash
+echo 'CODEXAUTH_SYNC_DIR=~/codex-profiles' > .env
+```
+
+The path is expanded with your home directory, so `~/...` works.
+
+### Import profiles from the sync directory
+
+Pull remote changes first if this directory is backed by Git:
+
+```bash
+./codexauth.py pull
+./codexauth.py import
+```
+
+```bash
+./codexauth.py import
+```
+
+This command:
+
+- reads `CODEXAUTH_SYNC_DIR` from `.env`
+- lists `*.json` profiles found in that directory
+- lets you select one, many, or `all`
+- shows source and destination modified times before any overwrite
+- preserves the source file's modified timestamp on import
+
+Example prompt flow:
+
+```text
+Import profiles
+1. personal
+2. work (overwrites local; src 2026-03-10 09:15:00, dest 2026-03-08 18:42:00)
+
+Select profiles by number (comma-separated), 'all', or 'q': 2
+Import profile 'work' from external modified 2026-03-10 09:15:00 over local modified 2026-03-08 18:42:00? [y/N]:
+```
+
+### Export profiles to the sync directory
+
+```bash
+./codexauth.py export
+```
+
+This command mirrors `import`:
+
+- lists local profiles
+- lets you select one, many, or `all`
+- creates the sync directory if needed
+- asks before overwriting an existing external profile
+- preserves the local file's modified timestamp on export
+
+If the sync directory is a Git repo, publish exported changes with:
+
+```bash
+./codexauth.py export
+./codexauth.py push
+```
+
+`pull` runs `git pull` in `CODEXAUTH_SYNC_DIR`.
+
+`push` runs the equivalent of:
+
+```bash
+git add .
+git commit -m "Update exported codexauth profiles"
+git push
+```
+
+If there is nothing staged after `git add .`, `push` exits successfully without creating a commit.
+
 ## How usage data works
 
 Quota is fetched from `https://chatgpt.com/backend-api/wham/usage` using the `access_token` stored in each profile's `auth.json`. Two windows are displayed:
@@ -107,6 +184,8 @@ Quota is fetched from `https://chatgpt.com/backend-api/wham/usage` using the `ac
 - Tokens are automatically refreshed if they are older than 8 days
 - `api_key` mode profiles show `N/A` (no quota limits apply)
 - Expired or revoked tokens show `expired` in red
+
+If refresh succeeds, the local stored profile is updated with the new tokens and a fresh `last_refresh` timestamp.
 
 ## File layout
 
@@ -122,6 +201,23 @@ Profiles are stored in `~/.codexauth/`:
 ```
 
 The store directory is created with `chmod 700` and individual token files with `chmod 600`.
+
+## Sync directory layout
+
+When `CODEXAUTH_SYNC_DIR` is configured, imported and exported profiles are stored as plain JSON files:
+
+```text
+~/codex-profiles/
+├── work.json
+└── personal.json
+```
+
+These files are copied with metadata preserved so modified times stay meaningful during overwrite prompts.
+
+## Notes
+
+- Stored profiles and backups are local plaintext JSON files; they are permission-restricted but not encrypted.
+- `import` and `export` validate that files contain valid JSON before copying them.
 
 ## Running tests
 
