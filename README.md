@@ -97,7 +97,7 @@ This copies the profile to `~/.codex/auth.json` and backs up the previous file t
 ./codexauth.py remove personal
 ```
 
-### Configure sync import/export
+### Configure sync
 
 `import` and `export` read a sync directory from a repo-local `.env` file:
 
@@ -107,57 +107,30 @@ echo 'CODEXAUTH_SYNC_DIR=~/codex-profiles' > .env
 
 The path is expanded with your home directory, so `~/...` works.
 
-### Import profiles from the sync directory
+### Pull shared changes
 
-Pull remote changes first if this directory is backed by Git:
+If the configured sync directory is a Git repo, fetch remote changes and then import every profile with:
 
 ```bash
 ./codexauth.py pull
-./codexauth.py import
 ```
+
+`pull` reads `CODEXAUTH_SYNC_DIR` from `.env`, runs `git pull`, and then imports all `*.json` profiles from that directory. If a profile would overwrite an existing local copy, it shows both modified timestamps before prompting.
+
+### Publish local changes
+
+To export every local profile and publish the result from the sync repo:
 
 ```bash
-./codexauth.py import
-```
-
-This command:
-
-- reads `CODEXAUTH_SYNC_DIR` from `.env`
-- imports all `*.json` profiles found in that directory by default
-- shows source and destination modified times before any overwrite
-- preserves the source file's modified timestamp on import
-
-Example prompt flow:
-
-```text
-Import profile 'work' from external modified 2026-03-10 09:15:00 over local modified 2026-03-08 18:42:00? [y/N]:
-```
-
-### Export profiles to the sync directory
-
-```bash
-./codexauth.py export
-```
-
-This command mirrors `import`:
-
-- exports all local profiles by default
-- creates the sync directory if needed
-- asks before overwriting an existing external profile
-- preserves the local file's modified timestamp on export
-
-If the sync directory is a Git repo, publish exported changes with:
-
-```bash
-./codexauth.py export
 ./codexauth.py push
 ```
 
-`pull` runs `git pull` in `CODEXAUTH_SYNC_DIR`.
+`push` now exports every local profile first, then runs Git publication in `CODEXAUTH_SYNC_DIR`.
 
-`push` runs the equivalent of:
+It runs the equivalent of:
 
 ```bash
+export local profiles into CODEXAUTH_SYNC_DIR
 git add .
 git commit -m "Update exported codexauth profiles"
 git push
@@ -210,7 +183,7 @@ These files are copied with metadata preserved so modified times stay meaningful
 ## Notes
 
 - Stored profiles and backups are local plaintext JSON files; they are permission-restricted but not encrypted.
-- `import` and `export` validate that files contain valid JSON before copying them.
+- Hidden `import` and `export` commands still exist for testing lower-level sync behavior, but the normal user workflow is `pull` and `push`.
 
 ## Running tests
 

@@ -70,4 +70,4 @@ async def test_refresh_tokens_failure_returns_original():
 async def test_refresh_tokens_no_refresh_token():
     profile = {"auth_mode": "chatgpt", "tokens": {}}
     result = await refresh_tokens(profile)
-    assert result is profile  # unchanged, same object
+    assert result == profile

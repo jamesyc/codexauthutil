@@ -17,7 +17,7 @@ The project is intentionally lightweight. It is a local tool, not a service, and
 - Preserve the currently installed `~/.codex/auth.json` before replacing it.
 - Surface usage information in a human-friendly terminal view.
 - Refresh ChatGPT OAuth tokens automatically when they are stale.
-- Support importing from and exporting to a shared profile folder defined in a `.env` file.
+- Support pull/push sync against a shared profile folder defined in a `.env` file.
 - Keep the implementation easy to understand and maintain.
 
 ## Non-Goals
@@ -34,8 +34,8 @@ The project is intentionally lightweight. It is a local tool, not a service, and
 3. The user runs `codexauth list` to see available profiles and current usage.
 4. The user runs `codexauth use personal` to switch the active profile.
 5. The tool copies the selected profile into `~/.codex/auth.json` and marks it active.
-6. The user imports selected profiles from an external folder configured in `.env`.
-7. The user exports selected local profiles to that same external folder for backup or sharing across environments.
+6. The user runs `codexauth pull` to import profiles from a shared Git-backed folder configured in `.env`.
+7. The user runs `codexauth push` to export local profiles and publish them from that same folder.
 
 ## High-Level Architecture
 
@@ -123,6 +123,7 @@ Within that external directory, profile files are expected to be stored as:
 
 ### `codexauth import`
 
+- Intended primarily as a lower-level testing and debugging command rather than the main user workflow.
 - Reads the external profile directory path from `.env`.
 - Imports all available external profiles by default.
 - Detects name collisions with locally stored profiles.
@@ -130,6 +131,7 @@ Within that external directory, profile files are expected to be stored as:
 
 ### `codexauth export`
 
+- Intended primarily as a lower-level testing and debugging command rather than the main user workflow.
 - Reads the external profile directory path from `.env`.
 - Exports all available local profiles by default.
 - Detects name collisions with profiles already present in the external directory.
@@ -140,16 +142,18 @@ Within that external directory, profile files are expected to be stored as:
 - Reads the external profile directory path from `.env`.
 - Treats that directory as a Git working tree used to fetch remote profile changes.
 - Changes into the sync directory and runs `git pull`.
-- Is intended to be run before `codexauth import`, but remains a separate command so users control when remote changes are brought into the sync directory.
+- Imports all profiles from the sync directory after a successful pull.
+- Prompts only for overwrite cases during the import step.
 
 ### `codexauth push`
 
 - Reads the external profile directory path from `.env`.
+- Exports all local profiles into the sync directory first.
 - Treats that directory as a Git working tree used to publish exported profiles.
 - Changes into the sync directory and runs `git add .`.
 - Creates a commit with a default message describing the exported-profile update.
 - Runs `git push` to publish the commit to the configured remote.
-- Is intended to be run after `codexauth export`, but remains a separate command so users can review changes before publishing.
+- Stages, commits, and pushes the exported changes in one command.
 
 ## Activation Flow
 
@@ -179,6 +183,7 @@ The CLI fetches usage concurrently for all profiles with `asyncio.gather`, which
 ## Import and Export Design
 
 The import/export feature extends the existing filesystem-first design by introducing an optional shared folder configured through a `.env` file.
+These commands are retained primarily as lower-level testing and debugging helpers; the intended end-user sync workflow is `pull` and `push`.
 
 ### Configuration
 
@@ -220,12 +225,12 @@ The export flow mirrors the import flow so users only need to learn one mental m
 
 ## Git Sync Design
 
-The Git sync feature extends the sync-directory workflow by assuming that the external profile directory may also be a Git repository. The goal is to support two lightweight, explicit workflows:
+The Git sync feature extends the sync-directory workflow by assuming that the external profile directory may also be a Git repository. The goal is to support two lightweight workflows:
 
-1. inbound: run `codexauth pull`, then `codexauth import`
-2. outbound: run `codexauth export`, then `codexauth push`
+1. inbound: run `codexauth pull`
+2. outbound: run `codexauth push`
 
-This separation keeps import/export independent from Git transport. Users can inspect repository changes before importing or publishing, while still having small convenience commands for the Git steps.
+Standalone `import` and `export` remain available, but `pull` and `push` now include those file-copy steps by default for the common sync path.
 
 ### Pull Flow
 
@@ -236,14 +241,16 @@ The pull command should behave as follows:
 3. Fail with a clear error if the directory does not exist.
 4. Fail with a clear error if the directory is not inside a Git working tree.
 5. Run `git pull`.
-6. Print a success message summarizing what happened.
+6. Import all profiles from the sync directory.
+7. Prompt only for overwrite cases during import.
+8. Print a success message summarizing what happened.
 
 ### Push Flow
 
 The push command should behave as follows:
 
 1. Read the external profile directory from `.env`.
-2. Fail with a clear setup message if the directory is not configured.
+2. Export all local profiles into the sync directory.
 3. Fail with a clear error if the directory does not exist.
 4. Fail with a clear error if the directory is not inside a Git working tree.
 5. Run `git add .` from that directory.
@@ -261,16 +268,14 @@ The default commit message should be deterministic and specific enough to explai
 
 This keeps history readable without overfitting the message to a specific export selection. A future extension could allow a custom message flag, but the initial design does not require one.
 
-### Why Separate `pull`/`push` from `import`/`export`?
+### Why Keep `import`/`export` Alongside `pull`/`push`?
 
-Keeping Git transport separate from profile copy operations has a few benefits:
+Keeping the lower-level copy commands still has benefits:
 
-- users can review the diff before publishing secrets-related changes
-- users can pull remote changes without immediately importing them
-- users can export locally even when offline or when Git remotes are unavailable
+- users can review or manipulate sync-directory files without Git
+- users can export locally even when Git remotes are unavailable
 - users can import from the sync directory even when Git remotes are unavailable
-- failed Git operations do not make import/export themselves look unreliable
-- the command model stays composable: pull then import, or export then push
+- users can still choose a two-step manual flow when they want more control
 
 ### Edge Cases and Failure Modes
 
@@ -302,6 +307,12 @@ This may happen because of:
 
 The design should not attempt to resolve conflicts or modify the repository state automatically.
 
+#### Pull succeeds but import is partially declined
+
+After a successful `git pull`, the subsequent import step may still hit overwrite prompts. Users may accept some overwrites and decline others, producing a partial local update.
+
+This is acceptable because overwrite confirmation is more important than forcing the local store to mirror the sync directory exactly.
+
 #### No exported changes
 
 If `git add .` is successful but there is nothing to commit, the command should not treat that as an error. It should print a message such as "No changes to commit" and exit successfully without calling `git push`.
@@ -312,6 +323,12 @@ This case matters because users may routinely run:
 2. `codexauth push`
 
 even when the export did not materially change any files.
+
+#### Export succeeds but Git publication fails
+
+Because `push` now exports before running Git commands, it can partially succeed: the sync directory may be updated on disk even if Git validation, commit, or push later fails.
+
+This is acceptable because the export step is still useful on its own, and the design should avoid destructive rollback behavior.
 
 #### Untracked or unrelated files in the sync directory
 

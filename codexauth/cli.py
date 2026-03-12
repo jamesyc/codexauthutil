@@ -42,23 +42,19 @@ from codexauth.usage import UsageResult, fetch_all_usage
         "Sync setup:\n\n"
         "\b\n"
         "  Add CODEXAUTH_SYNC_DIR=/path/to/profiles to a repo-local .env file.\n"
-        "  `import` and `export` copy profile JSON files between local storage and that directory.\n"
-        "  `pull` and `push` run Git commands inside that same sync directory.\n\n"
+        "  `pull` runs git pull and then imports from that directory.\n"
+        "  `push` exports to that directory and then runs git add/commit/push.\n\n"
         "Typical workflow order:\n\n"
         "\b\n"
-        "  Pull shared changes first, then import:\n"
-        "    codexauth pull\n"
-        "    codexauth import\n\n"
+        "  Pull shared changes and import them:\n"
+        "    codexauth pull\n\n"
         "\b\n"
-        "  Export, then publish:\n"
-        "    codexauth export\n"
+        "  Export local changes and publish them:\n"
         "    codexauth push\n\n"
         "Examples:\n\n"
         "\b\n"
         "  codexauth add work\n"
         "  codexauth pull\n"
-        "  codexauth import\n"
-        "  codexauth export\n"
         "  codexauth push"
     ),
 )
@@ -193,6 +189,7 @@ def status_cmd():
 @cli.command(
     "import",
     short_help="Import profiles from CODEXAUTH_SYNC_DIR.",
+    hidden=True,
     help=(
         "Import all profile JSON files from CODEXAUTH_SYNC_DIR into ~/.codexauth/tokens.\n\n"
         "The sync directory is read from CODEXAUTH_SYNC_DIR in a repo-local .env file.\n"
@@ -203,26 +200,13 @@ def status_cmd():
 def import_cmd():
     """Import all profiles from CODEXAUTH_SYNC_DIR into local storage."""
     sync_dir = _require_sync_dir()
-    candidates = build_import_candidates(sync_dir)
-    if not candidates:
-        console.print(f"[dim]No profiles found in [bold]{sync_dir}[/bold].[/dim]")
-        return
-
-    imported = 0
-    for candidate in candidates:
-        if candidate.will_overwrite and not _confirm_overwrite("import", candidate, "external", "local"):
-            continue
-        import_profile(candidate.name, candidate.source_path)
-        imported += 1
-        console.print(f"[green]✓[/green] Imported profile [bold]{candidate.name}[/bold]")
-
-    if imported == 0:
-        console.print("[dim]No profiles imported.[/dim]")
+    _run_import(sync_dir)
 
 
 @cli.command(
     "export",
     short_help="Export profiles to CODEXAUTH_SYNC_DIR.",
+    hidden=True,
     help=(
         "Export all local profiles from ~/.codexauth/tokens into CODEXAUTH_SYNC_DIR.\n\n"
         "The sync directory is read from CODEXAUTH_SYNC_DIR in a repo-local .env file.\n"
@@ -233,33 +217,19 @@ def import_cmd():
 def export_cmd():
     """Export all local profiles into CODEXAUTH_SYNC_DIR."""
     sync_dir = _require_sync_dir()
-    candidates = build_export_candidates(sync_dir)
-    if not candidates:
-        console.print("[dim]No local profiles stored to export.[/dim]")
-        return
-
-    exported = 0
-    for candidate in candidates:
-        if candidate.will_overwrite and not _confirm_overwrite("export", candidate, "local", "external"):
-            continue
-        export_profile(candidate.name, candidate.dest_path)
-        exported += 1
-        console.print(f"[green]✓[/green] Exported profile [bold]{candidate.name}[/bold]")
-
-    if exported == 0:
-        console.print("[dim]No profiles exported.[/dim]")
+    _run_export(sync_dir)
 
 
 @cli.command(
     "pull",
-    short_help="Run git pull in the sync directory.",
+    short_help="Pull the sync repo, then import profiles.",
     help=(
-        "Run `git pull` in CODEXAUTH_SYNC_DIR.\n\n"
-        "Use this before `import` when the sync directory is a Git repository that receives shared profile updates."
+        "Run `git pull` in CODEXAUTH_SYNC_DIR, then import all profiles from that directory into local storage.\n\n"
+        "Overwrite cases still ask for confirmation during the import step."
     ),
 )
 def pull_cmd():
-    """Run git pull in CODEXAUTH_SYNC_DIR before importing shared profiles."""
+    """Run git pull, then import profiles from CODEXAUTH_SYNC_DIR."""
     sync_dir = _require_sync_dir()
     try:
         message = pull_sync_repo(sync_dir)
@@ -270,16 +240,18 @@ def pull_cmd():
     console.print(f"[green]✓[/green] Pulled sync repo [bold]{sync_dir}[/bold]")
     if message:
         console.print(f"[dim]{message}[/dim]")
+    _run_import(sync_dir)
 
 
 @cli.command(
     "push",
-    short_help="Stage, commit, and push sync-directory changes.",
+    short_help="Export profiles, then commit and push sync changes.",
     help=(
-        "Run Git publication steps in CODEXAUTH_SYNC_DIR after exporting profiles.\n\n"
+        "Export all local profiles into CODEXAUTH_SYNC_DIR, then run Git publication steps there.\n\n"
         "This command runs:\n"
         "\n"
         "\b\n"
+        "  export local profiles into CODEXAUTH_SYNC_DIR\n"
         "  git add .\n"
         "  git commit -m \"Update exported codexauth profiles\"\n"
         "  git push\n\n"
@@ -287,8 +259,9 @@ def pull_cmd():
     ),
 )
 def push_cmd():
-    """Run git add/commit/push in CODEXAUTH_SYNC_DIR after exporting profiles."""
+    """Export profiles, then run git add/commit/push in CODEXAUTH_SYNC_DIR."""
     sync_dir = _require_sync_dir()
+    _run_export(sync_dir)
     try:
         message = push_sync_repo(sync_dir)
     except FileNotFoundError as e:
@@ -320,6 +293,42 @@ def _require_sync_dir() -> Path:
             "Missing CODEXAUTH_SYNC_DIR in .env. Add CODEXAUTH_SYNC_DIR=/path/to/profiles."
         )
     return sync_dir
+
+
+def _run_import(sync_dir: Path) -> None:
+    candidates = build_import_candidates(sync_dir)
+    if not candidates:
+        console.print(f"[dim]No profiles found in [bold]{sync_dir}[/bold].[/dim]")
+        return
+
+    imported = 0
+    for candidate in candidates:
+        if candidate.will_overwrite and not _confirm_overwrite("import", candidate, "external", "local"):
+            continue
+        import_profile(candidate.name, candidate.source_path)
+        imported += 1
+        console.print(f"[green]✓[/green] Imported profile [bold]{candidate.name}[/bold]")
+
+    if imported == 0:
+        console.print("[dim]No profiles imported.[/dim]")
+
+
+def _run_export(sync_dir: Path) -> None:
+    candidates = build_export_candidates(sync_dir)
+    if not candidates:
+        console.print("[dim]No local profiles stored to export.[/dim]")
+        return
+
+    exported = 0
+    for candidate in candidates:
+        if candidate.will_overwrite and not _confirm_overwrite("export", candidate, "local", "external"):
+            continue
+        export_profile(candidate.name, candidate.dest_path)
+        exported += 1
+        console.print(f"[green]✓[/green] Exported profile [bold]{candidate.name}[/bold]")
+
+    if exported == 0:
+        console.print("[dim]No profiles exported.[/dim]")
 
 
 def _confirm_overwrite(
