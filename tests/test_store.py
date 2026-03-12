@@ -1,6 +1,7 @@
 """Tests for codexauth.store."""
 
 import json
+import os
 import pytest
 import codexauth.store as store
 from codexauth.store import ProfileNotFoundError
@@ -78,3 +79,14 @@ def test_profile_file_permissions(sample_profile):
     store.save_profile("work", sample_profile)
     path = store.TOKENS_DIR / "work.json"
     assert oct(path.stat().st_mode)[-3:] == "600"
+
+
+def test_save_profile_from_file_preserves_mtime(sample_profile, tmp_path):
+    source = tmp_path / "source.json"
+    source.write_text(json.dumps(sample_profile))
+    os.utime(source, (1_700_000_000, 1_700_000_000))
+
+    store.save_profile_from_file("work", source, preserve_mtime=True)
+
+    dest = store.TOKENS_DIR / "work.json"
+    assert int(dest.stat().st_mtime) == 1_700_000_000
