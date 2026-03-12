@@ -190,6 +190,72 @@ Profile activation is the core operation:
 
 This keeps the switch operation explicit and reversible at the file level.
 
+### External Refresh Reconciliation
+
+Because activation is a one-way copy from `~/.codexauth/tokens/<name>.json` to
+`~/.codex/auth.json`, another app can refresh tokens in the active `auth.json`
+without updating the stored named profile. That can lead to stale stored tokens
+being reactivated later.
+
+To support external refreshes safely, the design should add an explicit
+reconciliation step before replacing `~/.codex/auth.json`:
+
+1. Read the active marker (`~/.codexauth/active`) if present.
+2. If the active marker points to an existing stored profile, compare
+   `~/.codex/auth.json` with that stored profile.
+3. If they differ and both still look like the same auth identity,
+   update `~/.codexauth/tokens/<active>.json` from `~/.codex/auth.json`
+   before any new activation proceeds.
+
+Identity matching should be conservative to avoid accidentally writing one
+account over another. A reasonable baseline is:
+
+- `auth_mode` must match
+- if present on both sides, `tokens.account_id` must match
+- if present on both sides, stable JWT subject claims from `id_token`
+  should match
+
+When identity cannot be confirmed, the tool should not auto-overwrite. Instead
+it should surface a clear warning and require an explicit command to reconcile.
+
+### Proposed Commands
+
+To keep behavior clear and testable, add explicit commands alongside the
+automatic pre-activation safeguard:
+
+- `codexauth reconcile-active`
+  - compares `~/.codex/auth.json` with the currently active stored profile
+  - writes back to the store only when identity checks pass
+  - prints whether an update occurred or no differences were found
+
+- `codexauth add --from-active <name>` (optional future extension)
+  - snapshots the current `~/.codex/auth.json` into a named profile
+  - useful when identity checks fail but the user still wants a controlled save
+
+### Failure and Safety Rules
+
+The reconciliation path should prioritize credential safety:
+
+- missing `~/.codex/auth.json`: no-op with clear message
+- missing active marker: no-op with clear message
+- active marker points to missing profile file: warning and no write
+- invalid JSON on either side: fail with concise parse error
+- identity mismatch: no write unless user explicitly forces an overwrite
+
+All writes should preserve existing file permissions (`0600`) and update mtime,
+because the stored profile contents genuinely changed.
+
+### Observability
+
+When reconciliation changes a stored profile, the CLI output should explicitly
+state:
+
+- which profile was updated
+- which fields changed at a high level (for example, tokens refreshed)
+- that the update source was `~/.codex/auth.json`
+
+This makes externally-triggered refresh sync visible instead of implicit.
+
 ## Manual OAuth Bootstrap Design
 
 The project can support a browser-assisted OAuth bootstrap without attempting to control the
