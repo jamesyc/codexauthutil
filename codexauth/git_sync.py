@@ -10,7 +10,7 @@ class GitCommandError(Exception):
     """Raised when a git subprocess fails."""
 
     def __init__(self, args: list[str], stderr: str = "", stdout: str = ""):
-        self.args = args
+        self.command = tuple(args)
         self.stderr = stderr.strip()
         self.stdout = stdout.strip()
         super().__init__(self.message)
@@ -18,7 +18,7 @@ class GitCommandError(Exception):
     @property
     def message(self) -> str:
         details = self.stderr or self.stdout or "git command failed"
-        return f"{' '.join(self.args)} failed: {details}"
+        return f"{' '.join(self.command)} failed: {details}"
 
 
 def _run_git(sync_dir: Path, *args: str) -> subprocess.CompletedProcess[str]:

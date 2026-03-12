@@ -50,6 +50,19 @@ Or save from a specific file:
 
 `add` preserves the source file's modified timestamp, which is useful when comparing local and synced copies later.
 
+### Log into a new profile
+
+Bootstrap a fresh ChatGPT-backed profile through the browser OAuth flow:
+
+```bash
+./codexauth.py login
+./codexauth.py login work
+```
+
+This uses the hard-coded Codex/OpenClaw OAuth client and redirect URI `http://localhost:1455/auth/callback`, and sends the same extra authorize parameters Codex/OpenClaw use.
+
+The command prints an authorization URL, waits for you to paste back the full localhost callback URL, exchanges the authorization code for tokens, asks for a profile name if you did not pass one on the command line, saves the profile, and then shows the normal profile list.
+
 ### List profiles
 
 Shows all profiles with live quota usage, then prompts you to activate one:

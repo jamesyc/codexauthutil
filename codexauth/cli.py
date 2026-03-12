@@ -8,6 +8,7 @@ import click
 
 from codexauth.config import get_sync_dir
 from codexauth.git_sync import GitCommandError, pull_sync_repo, push_sync_repo
+from codexauth.oauth import OAuthError, begin_login, clear_pending_login, exchange_code
 from codexauth import store
 from codexauth.display import console, interactive_prompt, render_table
 from codexauth.store import (
@@ -17,6 +18,7 @@ from codexauth.store import (
     get_active,
     list_profiles,
     load_profile,
+    save_profile,
     save_profile_from_file,
 )
 from codexauth.sync import (
@@ -39,6 +41,7 @@ from codexauth.usage import UsageResult, fetch_all_usage
         "The active profile is copied into ~/.codex/auth.json when you run `use` or activate one from `list`.\n\n"
         "ChatGPT-backed profiles refresh tokens automatically during usage lookup in `list` when the stored\n"
         "refresh timestamp is stale or missing.\n\n"
+        "Use `login` to bootstrap a new ChatGPT-backed profile through a browser-based OAuth flow.\n\n"
         "Sync setup:\n\n"
         "\b\n"
         "  Add CODEXAUTH_SYNC_DIR=/path/to/profiles to a repo-local .env file.\n"
@@ -86,6 +89,11 @@ def cli(ctx):
 )
 def list_cmd(no_interactive, no_usage):
     """List profiles, auto-refresh stale ChatGPT tokens during usage lookup, and offer activation."""
+    _show_profiles(no_interactive=no_interactive, no_usage=no_usage)
+
+
+def _show_profiles(no_interactive: bool, no_usage: bool) -> None:
+    """Render stored profiles and optionally prompt for activation."""
     profiles = list_profiles()
     if not profiles:
         console.print(
@@ -150,6 +158,40 @@ def add_cmd(name, file_path):
         raise click.ClickException("File doesn't look like a valid auth.json.")
     save_profile_from_file(name, src, preserve_mtime=True)
     console.print(f"[green]✓[/green] Saved profile [bold]{name}[/bold]")
+
+
+@cli.command(
+    "login",
+    short_help="Bootstrap a new ChatGPT-backed profile via manual OAuth.",
+    help=(
+        "Start a browser-assisted OAuth login for a named profile.\n\n"
+        "The command prints an authorization URL, asks you to open it in a browser, and then prompts for the full\n"
+        "localhost callback URL after login. A browser connection error at the localhost redirect is expected."
+    ),
+)
+@click.argument("name", required=False)
+def login_cmd(name):
+    """Bootstrap a ChatGPT-backed profile using a manual browser OAuth flow."""
+    try:
+        auth_url = begin_login(name)
+        console.print("Open this URL in your browser:")
+        console.print(auth_url)
+        console.print(
+            "[dim]After login, your browser may show a localhost connection error. "
+            "That is expected. Copy the full callback URL from the address bar and paste it below.[/dim]"
+        )
+        callback_url = click.prompt("Callback URL", type=str)
+        profile = asyncio.run(exchange_code(callback_url))
+        final_name = name or click.prompt("Profile name", type=str).strip()
+        if not final_name:
+            raise click.ClickException("Profile name cannot be empty.")
+        save_profile(final_name, profile)
+        clear_pending_login()
+    except OAuthError as e:
+        raise click.ClickException(str(e))
+
+    console.print(f"[green]✓[/green] Saved profile [bold]{final_name}[/bold]")
+    _show_profiles(no_interactive=True, no_usage=True)
 
 
 @cli.command(

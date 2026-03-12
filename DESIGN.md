@@ -17,6 +17,7 @@ The project is intentionally lightweight. It is a local tool, not a service, and
 - Preserve the currently installed `~/.codex/auth.json` before replacing it.
 - Surface usage information in a human-friendly terminal view.
 - Refresh ChatGPT OAuth tokens automatically when they are stale.
+- Support bootstrapping a new ChatGPT-backed profile through a manual browser OAuth flow.
 - Support pull/push sync against a shared profile folder defined in a `.env` file.
 - Keep the implementation easy to understand and maintain.
 
@@ -25,7 +26,7 @@ The project is intentionally lightweight. It is a local tool, not a service, and
 - Managing remote state or syncing profiles across machines.
 - Supporting a database-backed storage system.
 - Providing deep account management beyond auth file switching and usage lookup.
-- Replacing the Codex authentication flow itself.
+- Automating browser login or embedding a browser UI inside the CLI.
 
 ## Primary Use Cases
 
@@ -36,6 +37,7 @@ The project is intentionally lightweight. It is a local tool, not a service, and
 5. The tool copies the selected profile into `~/.codex/auth.json` and marks it active.
 6. The user runs `codexauth pull` to import profiles from a shared Git-backed folder configured in `.env`.
 7. The user runs `codexauth push` to export local profiles and publish them from that same folder.
+8. The user runs `codexauth login` to generate a login URL for a new profile. The user pastes that URL into a browser, logs in, and reaches a localhost redirect that is expected to fail. The user copies the full callback URL from the browser address bar back into the CLI. The tool exchanges the authorization code for tokens and saves the result as a normal profile.
 
 ## High-Level Architecture
 
@@ -46,6 +48,7 @@ The system is organized into a few focused modules:
 - `codexauth/store.py`: Filesystem storage, active profile tracking, and activation logic.
 - `codexauth/usage.py`: Usage retrieval and concurrent usage fetching across profiles.
 - `codexauth/refresh.py`: Refresh-token handling for ChatGPT OAuth credentials.
+- `codexauth/oauth.py`: manual OAuth bootstrap helpers, callback validation, and code exchange.
 - `codexauth/display.py`: Rich-based table rendering and interactive prompt behavior.
 - `codexauth/sync.py`: import/export candidate discovery, modified-time formatting, and metadata-preserving file copies.
 
@@ -104,6 +107,25 @@ Within that external directory, profile files are expected to be stored as:
 - Performs a lightweight validity check by requiring `auth_mode` or `tokens`.
 - Copies the source auth file into local storage under the given name.
 - Preserves the source file's modified timestamp so imported profile age stays meaningful.
+
+### `codexauth login [name]`
+
+- Begins a manual OAuth bootstrap for a new profile.
+- Uses the fixed Codex/OpenClaw OAuth client ID and redirect URI, while still allowing scope and originator overrides from `.env` or process environment.
+- Generates a random `state`, PKCE `code_verifier`, and derived `code_challenge`.
+- Builds an authorization URL for the fixed Codex/OpenClaw OAuth client.
+- Saves pending OAuth state locally so the callback can be validated later.
+- Prints the URL and concise instructions telling the user to open it in a browser
+- Displays an input box for the user to paste the full localhost callback URL back into the CLI.
+- Accepts the pasted callback URL, and reads the pending OAuth state
+- Parses the callback URL query parameters.
+- Validates the returned `state`.
+- Extracts the authorization `code`.
+- Exchanges the code for tokens at the configured token endpoint using PKCE.
+- Maps the response into the local `auth.json`-style profile structure.
+- Prompts for a profile name if the user did not pass one on the command line.
+- Saves the new profile under `~/.codexauth/tokens/<name>.json`.
+- Removes the pending OAuth state after success.
 
 ### `codexauth use <name>`
 
@@ -167,6 +189,59 @@ Profile activation is the core operation:
 6. Write the active profile name to `~/.codexauth/active`.
 
 This keeps the switch operation explicit and reversible at the file level.
+
+## Manual OAuth Bootstrap Design
+
+The project can support a browser-assisted OAuth bootstrap without attempting to control the
+browser. The intended flow is:
+
+1. The user runs `codexauth login`, optionally with a profile name.
+2. The CLI generates an authorization URL using the fixed Codex/OpenClaw OAuth client ID and the fixed
+   redirect URI `http://localhost:1455/auth/callback`, random `state`, and PKCE challenge.
+3. The user pastes that URL into a browser and completes the provider's normal login flow.
+4. The provider redirects to a localhost callback URL such as
+   `http://localhost:1455/auth/callback?code=...&state=...`.
+5. No local web server is required. The browser may display a connection failure, but the full callback URL remains visible in the address bar.
+6. The user copies that callback URL and pastes it to this app.
+7. The CLI validates the callback against the locally stored pending OAuth state.
+8. The CLI exchanges the authorization code for tokens and saves the resulting profile, prompting for a profile name if needed.
+
+This design preserves the lightweight CLI character of the project and avoids hidden browser
+automation.
+Using a localhost redirect URI without a listening callback server is an intentional tradeoff.
+
+### Auth File Mapping
+
+The goal is to convert a successful token exchange into the same local profile shape already used by
+the rest of the application:
+
+- `auth_mode`: `chatgpt`
+- `OPENAI_API_KEY`: `null`
+- `tokens.access_token`: from the token response
+- `tokens.refresh_token`: from the token response when present
+- `tokens.id_token`: from the token response when present
+- `last_refresh`: set to the current UTC timestamp
+
+If the token exchange does not provide an account identifier, the profile may initially be saved
+without `tokens.account_id`. The usage subsystem can continue to treat that field as optional.
+
+### Failure Handling
+
+The OAuth bootstrap flow should fail clearly and safely:
+
+- missing or expired pending login state should stop the flow before any token request
+- callback URLs missing `code` or `state` should be rejected with a clear error
+- token exchange failures should surface a concise provider-facing error without dumping secrets
+
+### UX Notes
+
+The command output should optimize for copy/paste reliability:
+
+- `login` should print the authorization URL on its own line
+- it should remind the user that a localhost browser error is expected
+- it should accept a full callback URL directly
+- it should ask the user what to name the profile
+- successful completion should end with a saved-profile message and display `list`
 
 ## Usage Retrieval Design
 

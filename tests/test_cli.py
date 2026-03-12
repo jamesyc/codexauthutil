@@ -6,12 +6,14 @@ import stat
 import subprocess
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from click.testing import CliRunner
 
 from codexauth.cli import cli
 import codexauth.git_sync as git_sync_module
+import codexauth.oauth as oauth_module
 import codexauth.store as store_module
 from codexauth.sync import format_modified
 
@@ -25,6 +27,7 @@ def test_help(runner):
     result = runner.invoke(cli, ["--help"])
     assert result.exit_code == 0
     assert "add" in result.output
+    assert "login" in result.output
     assert "list" in result.output
     assert "use" in result.output
     assert "remove" in result.output
@@ -62,6 +65,159 @@ def test_add_default_preserves_source_mtime(runner, sample_profile):
     assert result.exit_code == 0
     saved_path = store_module.TOKENS_DIR / "work.json"
     assert int(saved_path.stat().st_mtime) == 1_600_000_000
+
+
+def test_login_success_saves_profile_and_shows_list(runner, monkeypatch):
+    callback_url = "http://127.0.0.1:1455/callback?code=abc123&state=state-1"
+    pending_path = store_module.STORE_DIR / "pending-login.json"
+
+    monkeypatch.setattr(oauth_module, "load_oauth_config", lambda: {
+        "client_id": "client-123",
+        "redirect_uri": "http://localhost:1455/auth/callback",
+        "scope": "openid profile email offline_access",
+        "originator": "codex_cli_rs",
+    })
+    monkeypatch.setattr(oauth_module.secrets, "token_urlsafe", lambda n: "state-1" if n == 32 else "verifier-1")
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "access_token": "new-access",
+                "refresh_token": "new-refresh",
+                "id_token": "new-id",
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, json):
+            assert url == oauth_module.TOKEN_URL
+            assert json["client_id"] == "client-123"
+            assert json["grant_type"] == "authorization_code"
+            assert json["code"] == "abc123"
+            assert json["redirect_uri"] == "http://localhost:1455/auth/callback"
+            assert json["code_verifier"] == "verifier-1"
+            return FakeResponse()
+
+    monkeypatch.setattr(oauth_module.httpx, "AsyncClient", FakeAsyncClient)
+
+    result = runner.invoke(cli, ["login", "work"], input=f"{callback_url}\n")
+
+    assert result.exit_code == 0
+    assert "Open this URL in your browser:" in result.output
+    assert "https://auth.openai.com/oauth/authorize?" in result.output
+    assert "Saved profile work" in result.output
+    assert "work" in result.output
+    saved = store_module.load_profile("work")
+    assert saved["tokens"]["access_token"] == "new-access"
+    assert saved["tokens"]["refresh_token"] == "new-refresh"
+    assert saved["tokens"]["id_token"] == "new-id"
+    assert pending_path.exists() is False
+
+
+def test_login_without_name_prompts_for_profile_name(runner, monkeypatch):
+    callback_url = "http://127.0.0.1:1455/callback?code=abc123&state=state-1"
+    pending_path = store_module.STORE_DIR / "pending-login.json"
+
+    monkeypatch.setattr(oauth_module, "load_oauth_config", lambda: {
+        "client_id": "client-123",
+        "redirect_uri": "http://localhost:1455/auth/callback",
+        "scope": "openid profile email offline_access",
+        "originator": "codex_cli_rs",
+    })
+    monkeypatch.setattr(oauth_module.secrets, "token_urlsafe", lambda n: "state-1" if n == 32 else "verifier-1")
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "access_token": "new-access",
+                "refresh_token": "new-refresh",
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, json):
+            return FakeResponse()
+
+    monkeypatch.setattr(oauth_module.httpx, "AsyncClient", FakeAsyncClient)
+
+    result = runner.invoke(cli, ["login"], input=f"{callback_url}\npersonal\n")
+
+    assert result.exit_code == 0
+    assert "Profile name" in result.output
+    assert "Saved profile personal" in result.output
+    assert store_module.load_profile("personal")["tokens"]["access_token"] == "new-access"
+    assert pending_path.exists() is False
+
+
+def test_login_uses_default_redirect_uri(runner, monkeypatch):
+    monkeypatch.setattr(oauth_module, "load_dotenv", lambda path=None: {})
+
+    config = oauth_module.load_oauth_config()
+
+    assert config["redirect_uri"] == oauth_module.DEFAULT_REDIRECT_URI
+    assert config["originator"] == oauth_module.DEFAULT_ORIGINATOR
+
+
+def test_begin_login_uses_codex_style_authorize_params(monkeypatch):
+    monkeypatch.setattr(oauth_module, "load_oauth_config", lambda: {
+        "client_id": "client-123",
+        "redirect_uri": "http://localhost:1455/auth/callback",
+        "scope": "openid profile email offline_access",
+        "originator": "codex_cli_rs",
+    })
+    monkeypatch.setattr(oauth_module.secrets, "token_urlsafe", lambda n: "state-1" if n == 32 else "verifier-1")
+
+    auth_url = oauth_module.begin_login("work")
+    parsed = urlparse(auth_url)
+    params = parse_qs(parsed.query)
+
+    assert parsed.scheme == "https"
+    assert parsed.netloc == "auth.openai.com"
+    assert parsed.path == "/oauth/authorize"
+    assert params["redirect_uri"] == ["http://localhost:1455/auth/callback"]
+    assert params["id_token_add_organizations"] == ["true"]
+    assert params["codex_cli_simplified_flow"] == ["true"]
+    assert params["originator"] == ["codex_cli_rs"]
+
+
+def test_login_rejects_bad_callback_state(runner, monkeypatch):
+    monkeypatch.setattr(oauth_module, "load_oauth_config", lambda: {
+        "client_id": "client-123",
+        "redirect_uri": "http://localhost:1455/auth/callback",
+        "scope": "openid profile email offline_access",
+        "originator": "codex_cli_rs",
+    })
+    monkeypatch.setattr(oauth_module.secrets, "token_urlsafe", lambda n: "expected-state" if n == 32 else "verifier-1")
+
+    result = runner.invoke(
+        cli,
+        ["login", "work"],
+        input="http://127.0.0.1:1455/callback?code=abc123&state=wrong-state\n",
+    )
+
+    assert result.exit_code != 0
+    assert "Callback state did not match" in result.output
+    assert store_module.list_profiles() == []
 
 
 def test_status_none(runner):
