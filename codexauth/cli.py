@@ -194,26 +194,22 @@ def status_cmd():
     "import",
     short_help="Import profiles from CODEXAUTH_SYNC_DIR.",
     help=(
-        "Import selected profile JSON files from CODEXAUTH_SYNC_DIR into ~/.codexauth/tokens.\n\n"
+        "Import all profile JSON files from CODEXAUTH_SYNC_DIR into ~/.codexauth/tokens.\n\n"
         "The sync directory is read from CODEXAUTH_SYNC_DIR in a repo-local .env file.\n"
-        "When a selected profile would overwrite an existing local profile, this command shows both modified\n"
-        "timestamps and asks for confirmation."
+        "This command imports every discovered profile by default. When a profile would overwrite an existing\n"
+        "local profile, it shows both modified timestamps and asks for confirmation."
     ),
 )
 def import_cmd():
-    """Import selected profiles from CODEXAUTH_SYNC_DIR into local storage."""
+    """Import all profiles from CODEXAUTH_SYNC_DIR into local storage."""
     sync_dir = _require_sync_dir()
     candidates = build_import_candidates(sync_dir)
     if not candidates:
         console.print(f"[dim]No profiles found in [bold]{sync_dir}[/bold].[/dim]")
         return
 
-    selected = _select_candidates("Import profiles", candidates, "local")
-    if not selected:
-        return
-
     imported = 0
-    for candidate in selected:
+    for candidate in candidates:
         if candidate.will_overwrite and not _confirm_overwrite("import", candidate, "external", "local"):
             continue
         import_profile(candidate.name, candidate.source_path)
@@ -228,26 +224,22 @@ def import_cmd():
     "export",
     short_help="Export profiles to CODEXAUTH_SYNC_DIR.",
     help=(
-        "Export selected local profiles from ~/.codexauth/tokens into CODEXAUTH_SYNC_DIR.\n\n"
+        "Export all local profiles from ~/.codexauth/tokens into CODEXAUTH_SYNC_DIR.\n\n"
         "The sync directory is read from CODEXAUTH_SYNC_DIR in a repo-local .env file.\n"
-        "When a selected export would overwrite an existing file in the sync directory, this command shows both\n"
-        "modified timestamps and asks for confirmation."
+        "This command exports every stored profile by default. When a profile would overwrite an existing file in\n"
+        "the sync directory, it shows both modified timestamps and asks for confirmation."
     ),
 )
 def export_cmd():
-    """Export selected local profiles into CODEXAUTH_SYNC_DIR."""
+    """Export all local profiles into CODEXAUTH_SYNC_DIR."""
     sync_dir = _require_sync_dir()
     candidates = build_export_candidates(sync_dir)
     if not candidates:
         console.print("[dim]No local profiles stored to export.[/dim]")
         return
 
-    selected = _select_candidates("Export profiles", candidates, "external")
-    if not selected:
-        return
-
     exported = 0
-    for candidate in selected:
+    for candidate in candidates:
         if candidate.will_overwrite and not _confirm_overwrite("export", candidate, "local", "external"):
             continue
         export_profile(candidate.name, candidate.dest_path)
@@ -328,43 +320,6 @@ def _require_sync_dir() -> Path:
             "Missing CODEXAUTH_SYNC_DIR in .env. Add CODEXAUTH_SYNC_DIR=/path/to/profiles."
         )
     return sync_dir
-
-
-def _select_candidates(title: str, candidates: list[SyncCandidate], destination_label: str) -> list[SyncCandidate]:
-    console.print(f"[bold]{title}[/bold]")
-    for idx, candidate in enumerate(candidates, 1):
-        suffix = ""
-        if candidate.will_overwrite:
-            suffix = (
-                f" [yellow](overwrites {destination_label}; src {format_modified(candidate.source_modified)}, "
-                f"dest {format_modified(candidate.dest_modified)})[/yellow]"
-            )
-        console.print(f"{idx}. {candidate.name}{suffix}")
-
-    raw_choice = click.prompt(
-        "Select profiles by number (comma-separated), 'all', or 'q'",
-        default="q",
-        show_default=False,
-    ).strip()
-    if raw_choice.lower() in {"q", ""}:
-        return []
-    if raw_choice.lower() == "all":
-        return candidates
-
-    selected: list[SyncCandidate] = []
-    seen: set[int] = set()
-    for chunk in raw_choice.split(","):
-        part = chunk.strip()
-        try:
-            idx = int(part)
-        except ValueError as exc:
-            raise click.ClickException(f"Invalid selection '{part}'.") from exc
-        if idx < 1 or idx > len(candidates):
-            raise click.ClickException(f"Selection '{idx}' is out of range.")
-        if idx not in seen:
-            selected.append(candidates[idx - 1])
-            seen.add(idx)
-    return selected
 
 
 def _confirm_overwrite(

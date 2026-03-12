@@ -121,7 +121,7 @@ def test_import_requires_sync_dir(runner, monkeypatch, tmp_path):
     assert "CODEXAUTH_SYNC_DIR" in result.output
 
 
-def test_import_selected_profiles(runner, sample_profile, monkeypatch, tmp_path):
+def test_import_imports_all_profiles_by_default(runner, sample_profile, monkeypatch, tmp_path):
     sync_dir = tmp_path / "sync"
     sync_dir.mkdir()
     work_path = sync_dir / "work.json"
@@ -135,11 +135,12 @@ def test_import_selected_profiles(runner, sample_profile, monkeypatch, tmp_path)
     (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
     monkeypatch.chdir(tmp_path)
 
-    result = runner.invoke(cli, ["import"], input="1\n")
+    result = runner.invoke(cli, ["import"])
 
     assert result.exit_code == 0
+    assert "Imported profile work" in result.output
     assert "Imported profile personal" in result.output
-    assert store_module.list_profiles() == ["personal"]
+    assert store_module.list_profiles() == ["personal", "work"]
     imported_path = store_module.TOKENS_DIR / "personal.json"
     assert int(imported_path.stat().st_mtime) == 1_700_000_000
 
@@ -163,17 +164,18 @@ def test_import_overwrite_shows_timestamps_and_can_skip(
     (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
     monkeypatch.chdir(tmp_path)
 
-    result = runner.invoke(cli, ["import"], input="1\nn\n")
+    result = runner.invoke(cli, ["import"], input="n\n")
 
     assert result.exit_code == 0
-    assert "overwrites local" in result.output
+    assert "Import profile 'work' from external modified" in result.output
+    assert "over local modified" in result.output
     assert "2023-11-14" in result.output
     assert "2020-09-13" in result.output
     assert "No profiles imported" in result.output
     assert store_module.load_profile("work")["tokens"]["account_id"] == "fake-account-id"
 
 
-def test_export_selected_profiles_creates_external_copy(
+def test_export_exports_all_profiles_by_default(
     runner, saved_profile, monkeypatch, tmp_path
 ):
     sync_dir = tmp_path / "sync"
@@ -182,7 +184,7 @@ def test_export_selected_profiles_creates_external_copy(
     (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
     monkeypatch.chdir(tmp_path)
 
-    result = runner.invoke(cli, ["export"], input="1\n")
+    result = runner.invoke(cli, ["export"])
 
     assert result.exit_code == 0
     assert "Exported profile work" in result.output
@@ -206,10 +208,11 @@ def test_export_overwrite_can_confirm(runner, saved_profile, monkeypatch, tmp_pa
     (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
     monkeypatch.chdir(tmp_path)
 
-    result = runner.invoke(cli, ["export"], input="1\ny\n")
+    result = runner.invoke(cli, ["export"], input="y\n")
 
     assert result.exit_code == 0
-    assert "overwrites external" in result.output
+    assert "Export profile 'work' from local modified" in result.output
+    assert "over external modified" in result.output
     assert "2023-11-14" in result.output
     assert "2020-09-13" in result.output
     assert json.loads(existing.read_text())["auth_mode"] == "chatgpt"

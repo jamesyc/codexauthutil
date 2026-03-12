@@ -124,18 +124,16 @@ Within that external directory, profile files are expected to be stored as:
 ### `codexauth import`
 
 - Reads the external profile directory path from `.env`.
-- Lists available external profiles and lets the user select which ones to import.
+- Imports all available external profiles by default.
 - Detects name collisions with locally stored profiles.
-- When a selected import would overwrite an existing local profile, shows both sides' last modified timestamps before confirmation.
-- Supports importing only a subset of available profiles rather than forcing a bulk sync.
+- When an import would overwrite an existing local profile, shows both sides' last modified timestamps before confirmation.
 
 ### `codexauth export`
 
 - Reads the external profile directory path from `.env`.
-- Lists available local profiles and lets the user select which ones to export.
+- Exports all available local profiles by default.
 - Detects name collisions with profiles already present in the external directory.
-- When a selected export would overwrite an existing external profile, shows both sides' last modified timestamps before confirmation.
-- Supports exporting only a subset of local profiles.
+- When an export would overwrite an existing external profile, shows both sides' last modified timestamps before confirmation.
 
 ### `codexauth pull`
 
@@ -197,11 +195,10 @@ This keeps configuration simple and avoids adding another persistent config syst
 1. Read the external profile directory from `.env`.
 2. Enumerate candidate `*.json` files in that directory.
 3. Compare them against local profiles by profile name.
-4. Present the user with a selection UI so they can choose which profiles to import.
-5. For profiles that do not exist locally, import directly.
-6. For profiles that already exist locally, show local and external modified times and ask whether to overwrite.
-7. Copy selected profiles into `~/.codexauth/tokens`.
-8. Preserve the source file's modified timestamp on the imported local copy.
+4. For profiles that do not exist locally, import directly.
+5. For profiles that already exist locally, show local and external modified times and ask whether to overwrite.
+6. Copy accepted profiles into `~/.codexauth/tokens`.
+7. Preserve the source file's modified timestamp on the imported local copy.
 
 Key UX requirement:
 
@@ -214,11 +211,10 @@ Key UX requirement:
 1. Read the external profile directory from `.env`.
 2. Enumerate local stored profiles.
 3. Compare them against files already present in the external directory.
-4. Present the user with a selection UI so they can choose which profiles to export.
-5. For profiles that do not exist externally, export directly.
-6. For profiles that already exist externally, show local and external modified times and ask whether to overwrite.
-7. Copy selected profiles into the external directory.
-8. Preserve the source file's modified timestamp on the exported copy.
+4. For profiles that do not exist externally, export directly.
+5. For profiles that already exist externally, show local and external modified times and ask whether to overwrite.
+6. Copy accepted profiles into the external directory.
+7. Preserve the source file's modified timestamp on the exported copy.
 
 The export flow mirrors the import flow so users only need to learn one mental model.
 
@@ -427,16 +423,16 @@ This allows prompts such as:
 
 The exact prompt format can vary, but the timestamps should be shown whenever overwriting is possible.
 
-### Selection UX
+### Bulk Default UX
 
-The current project already uses a simple interactive prompt for activation. Import/export can follow the same lightweight philosophy:
+Import and export now follow a bulk-by-default workflow:
 
-- show a numbered list of candidate profiles
-- allow selecting one, many, or all profiles
-- identify which entries would overwrite an existing destination
-- annotate overwrite candidates with last modified information
+- all discovered candidates are processed automatically
+- only overwrite cases prompt the user
+- non-conflicting profiles copy immediately
+- conflicting profiles can still be skipped individually
 
-For non-interactive workflows, a future extension could support explicit names or flags, but the initial design should prioritize clarity for interactive use.
+This keeps common sync operations fast while preserving explicit confirmation for destructive cases.
 
 ## Token Refresh Design
 

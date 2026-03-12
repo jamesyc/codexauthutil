@@ -123,19 +123,13 @@ Pull remote changes first if this directory is backed by Git:
 This command:
 
 - reads `CODEXAUTH_SYNC_DIR` from `.env`
-- lists `*.json` profiles found in that directory
-- lets you select one, many, or `all`
+- imports all `*.json` profiles found in that directory by default
 - shows source and destination modified times before any overwrite
 - preserves the source file's modified timestamp on import
 
 Example prompt flow:
 
 ```text
-Import profiles
-1. personal
-2. work (overwrites local; src 2026-03-10 09:15:00, dest 2026-03-08 18:42:00)
-
-Select profiles by number (comma-separated), 'all', or 'q': 2
 Import profile 'work' from external modified 2026-03-10 09:15:00 over local modified 2026-03-08 18:42:00? [y/N]:
 ```
 
@@ -147,8 +141,7 @@ Import profile 'work' from external modified 2026-03-10 09:15:00 over local modi
 
 This command mirrors `import`:
 
-- lists local profiles
-- lets you select one, many, or `all`
+- exports all local profiles by default
 - creates the sync directory if needed
 - asks before overwriting an existing external profile
 - preserves the local file's modified timestamp on export
