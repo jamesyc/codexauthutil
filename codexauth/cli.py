@@ -9,6 +9,7 @@ import click
 from codexauth.config import get_sync_dir
 from codexauth.git_sync import GitCommandError, pull_sync_repo, push_sync_repo
 from codexauth.oauth import OAuthError, begin_login, clear_pending_login, exchange_code
+from codexauth.reconcile import reconcile_active_to_store, reconcile_imported_active_profile
 from codexauth import store
 from codexauth.display import console, interactive_prompt, render_table
 from codexauth.store import (
@@ -94,6 +95,8 @@ def list_cmd(no_interactive, no_usage):
 
 def _show_profiles(no_interactive: bool, no_usage: bool) -> None:
     """Render stored profiles and optionally prompt for activation."""
+    _run_preflight_reconciliation(prompt_on_unsafe=False)
+
     profiles = list_profiles()
     if not profiles:
         console.print(
@@ -129,6 +132,7 @@ def _show_profiles(no_interactive: bool, no_usage: bool) -> None:
 @click.argument("name")
 def use_cmd(name):
     """Activate a stored profile by copying it into ~/.codex/auth.json."""
+    _run_preflight_reconciliation(prompt_on_unsafe=True)
     _activate(name)
 
 
@@ -229,6 +233,16 @@ def status_cmd():
 
 
 @cli.command(
+    "reconcile-active",
+    hidden=True,
+    help="Reconcile the active stored profile with ~/.codex/auth.json.",
+)
+def reconcile_active_cmd():
+    """Reconcile the active stored profile with ~/.codex/auth.json."""
+    _report_reconcile_result(reconcile_active_to_store(prompt_on_unsafe=True))
+
+
+@cli.command(
     "import",
     short_help="Import profiles from CODEXAUTH_SYNC_DIR.",
     hidden=True,
@@ -273,6 +287,7 @@ def export_cmd():
 def pull_cmd():
     """Run git pull, then import profiles from CODEXAUTH_SYNC_DIR."""
     sync_dir = _require_sync_dir()
+    _run_preflight_reconciliation(prompt_on_unsafe=True)
     try:
         message = pull_sync_repo(sync_dir)
     except FileNotFoundError as e:
@@ -282,7 +297,8 @@ def pull_cmd():
     console.print(f"[green]✓[/green] Pulled sync repo [bold]{sync_dir}[/bold]")
     if message:
         console.print(f"[dim]{message}[/dim]")
-    _run_import(sync_dir)
+    imported_names = _run_import(sync_dir)
+    _report_reconcile_result(reconcile_imported_active_profile(imported_names))
 
 
 @cli.command(
@@ -337,13 +353,14 @@ def _require_sync_dir() -> Path:
     return sync_dir
 
 
-def _run_import(sync_dir: Path) -> None:
+def _run_import(sync_dir: Path) -> set[str]:
     candidates = build_import_candidates(sync_dir)
     if not candidates:
         console.print(f"[dim]No profiles found in [bold]{sync_dir}[/bold].[/dim]")
-        return
+        return set()
 
     imported = 0
+    imported_names: set[str] = set()
     for candidate in candidates:
         if candidate.should_confirm_overwrite and not _confirm_overwrite(
             "import", candidate, "external", "local"
@@ -351,10 +368,12 @@ def _run_import(sync_dir: Path) -> None:
             continue
         import_profile(candidate.name, candidate.source_path)
         imported += 1
+        imported_names.add(candidate.name)
         console.print(f"[green]✓[/green] Imported profile [bold]{candidate.name}[/bold]")
 
     if imported == 0:
         console.print("[dim]No profiles imported.[/dim]")
+    return imported_names
 
 
 def _run_export(sync_dir: Path) -> None:
@@ -391,3 +410,24 @@ def _confirm_overwrite(
         ),
         default=False,
     )
+
+
+def _report_reconcile_result(result) -> None:
+    if result.status == "updated":
+        console.print(f"[green]✓[/green] {result.message}")
+    elif result.status == "warning":
+        console.print(f"[yellow]![/yellow] {result.message}")
+    elif result.status == "unsafe":
+        console.print(f"[yellow]![/yellow] {result.message}")
+
+
+def _run_preflight_reconciliation(prompt_on_unsafe: bool) -> None:
+    result = reconcile_active_to_store(prompt_on_unsafe=prompt_on_unsafe)
+    if result.status == "updated":
+        console.print(f"[green]✓[/green] {result.message}")
+        return
+    if result.status == "warning":
+        console.print(f"[yellow]![/yellow] {result.message}")
+        return
+    if result.status == "unsafe":
+        console.print(f"[yellow]![/yellow] {result.message}")

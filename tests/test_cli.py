@@ -4,6 +4,7 @@ import json
 import os
 import stat
 import subprocess
+import base64
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -21,6 +22,12 @@ from codexauth.sync import format_modified
 @pytest.fixture
 def runner():
     return CliRunner()
+
+
+def _jwt(payload: dict) -> str:
+    header = base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode()).rstrip(b"=").decode()
+    body = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
+    return f"{header}.{body}."
 
 
 def test_help(runner):
@@ -241,6 +248,38 @@ def test_use_not_found(runner):
     assert "not found" in result.output.lower()
 
 
+def test_use_prompts_on_unsafe_reconciliation(runner):
+    local = {
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": None,
+        "tokens": {
+            "id_token": "not-a-jwt",
+            "access_token": "stored-access",
+            "refresh_token": "refresh",
+        },
+    }
+    auth = {
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": None,
+        "tokens": {
+            "id_token": "also-not-a-jwt",
+            "access_token": "auth-access",
+            "refresh_token": "refresh",
+        },
+    }
+    store_module.save_profile("work", local)
+    store_module.save_profile("other", local)
+    store_module.set_active("work")
+    store_module.save_codex_auth(auth)
+
+    result = runner.invoke(cli, ["use", "other"], input="auth\n")
+
+    assert result.exit_code == 0
+    assert "Choose which copy should win for 'work'" in result.output
+    assert "Activated" in result.output
+    assert store_module.load_profile("work")["tokens"]["access_token"] == "auth-access"
+
+
 def test_remove(runner, saved_profile):
     result = runner.invoke(cli, ["remove", "work"])
     assert result.exit_code == 0
@@ -268,6 +307,31 @@ def test_list_shows_profiles(runner, saved_profile):
     result = runner.invoke(cli, ["list", "--no-usage", "--no-interactive"])
     assert result.exit_code == 0
     assert "work" in result.output
+
+
+def test_list_no_usage_reconciles_active_profile(runner):
+    profile = {
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": None,
+        "tokens": {
+            "id_token": _jwt({"iss": "https://auth.example", "sub": "user-1"}),
+            "access_token": "stored-access",
+            "refresh_token": "refresh",
+            "account_id": "acct-1",
+        },
+        "last_refresh": "2025-01-01T00:00:00+00:00",
+    }
+    store_module.save_profile("work", profile)
+    store_module.set_active("work")
+    auth = json.loads(json.dumps(profile))
+    auth["tokens"]["access_token"] = "auth-access"
+    store_module.save_codex_auth(auth)
+
+    result = runner.invoke(cli, ["list", "--no-usage", "--no-interactive"])
+
+    assert result.exit_code == 0
+    assert "Reconciled active profile 'work'" in result.output
+    assert store_module.load_profile("work")["tokens"]["access_token"] == "auth-access"
 
 
 def test_import_requires_sync_dir(runner, monkeypatch, tmp_path):
@@ -508,6 +572,90 @@ def test_pull_success(runner, sample_profile, monkeypatch, tmp_path):
         (["git", "rev-parse", "--is-inside-work-tree"], sync_dir),
         (["git", "pull"], sync_dir),
     ]
+
+
+def test_pull_reconciles_active_profile_before_git_pull(runner, monkeypatch, tmp_path):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    profile = {
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": None,
+        "tokens": {
+            "id_token": _jwt({"iss": "https://auth.example", "sub": "user-1"}),
+            "access_token": "stored-access",
+            "refresh_token": "refresh",
+            "account_id": "acct-1",
+        },
+        "last_refresh": "2025-01-01T00:00:00+00:00",
+    }
+    store_module.save_profile("work", profile)
+    store_module.set_active("work")
+    auth = json.loads(json.dumps(profile))
+    auth["tokens"]["access_token"] = "auth-access"
+    store_module.save_codex_auth(auth)
+
+    def fake_run(cmd, cwd, capture_output, text, check):
+        if cmd == ["git", "rev-parse", "--is-inside-work-tree"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="true\n", stderr="")
+        if cmd == ["git", "pull"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="Already up to date.\n", stderr="")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    monkeypatch.setattr(git_sync_module.subprocess, "run", fake_run)
+
+    result = runner.invoke(cli, ["pull"])
+
+    assert result.exit_code == 0
+    assert "Reconciled active profile 'work'" in result.output
+    assert store_module.load_profile("work")["tokens"]["access_token"] == "auth-access"
+
+
+def test_pull_updates_local_auth_from_newer_imported_active_profile(runner, monkeypatch, tmp_path):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    profile = {
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": None,
+        "tokens": {
+            "id_token": _jwt({"iss": "https://auth.example", "sub": "user-1"}),
+            "access_token": "old-access",
+            "refresh_token": "refresh",
+            "account_id": "acct-1",
+        },
+        "last_refresh": "2025-01-01T00:00:00+00:00",
+    }
+    store_module.save_profile("work", profile)
+    os.utime(store_module.TOKENS_DIR / "work.json", (1_600_000_000, 1_600_000_000))
+    store_module.set_active("work")
+    store_module.save_codex_auth(profile)
+    os.utime(store_module.CODEX_AUTH, (1_600_000_000, 1_600_000_000))
+
+    imported = json.loads(json.dumps(profile))
+    imported["tokens"]["access_token"] = "new-access"
+    imported_path = sync_dir / "work.json"
+    imported_path.write_text(json.dumps(imported))
+    os.utime(imported_path, (1_700_000_000, 1_700_000_000))
+
+    def fake_run(cmd, cwd, capture_output, text, check):
+        if cmd == ["git", "rev-parse", "--is-inside-work-tree"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="true\n", stderr="")
+        if cmd == ["git", "pull"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="Fetched.\n", stderr="")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    monkeypatch.setattr(git_sync_module.subprocess, "run", fake_run)
+
+    result = runner.invoke(cli, ["pull"])
+
+    assert result.exit_code == 0
+    assert "Updated ~/.codex/auth.json from imported active profile 'work'." in result.output
+    assert json.loads(store_module.CODEX_AUTH.read_text())["tokens"]["access_token"] == "new-access"
 
 
 def test_pull_failure_surfaces_git_error(runner, monkeypatch, tmp_path):

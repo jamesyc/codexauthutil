@@ -73,6 +73,16 @@ def set_active(name: str):
     ACTIVE_FILE.chmod(0o600)
 
 
+def save_codex_auth(data: dict):
+    """Write ~/.codex/auth.json, backing up the existing file when present."""
+    if CODEX_AUTH.exists():
+        _ensure_store()
+        shutil.copy2(CODEX_AUTH, CODEX_AUTH_BACKUP)
+    CODEX_AUTH.parent.mkdir(parents=True, exist_ok=True)
+    CODEX_AUTH.write_text(json.dumps(data, indent=2))
+    CODEX_AUTH.chmod(0o600)
+
+
 def activate(name: str):
     """Copy a profile to ~/.codex/auth.json, backing up the existing file."""
     src = TOKENS_DIR / f"{name}.json"

@@ -57,6 +57,21 @@ async def test_refresh_tokens_success():
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_refresh_tokens_retains_optional_fields_when_omitted():
+    respx.post(REFRESH_URL).mock(return_value=httpx.Response(200, json={
+        "access_token": "new-access",
+    }))
+
+    profile = _profile_with_refresh(days_ago=10)
+    result = await refresh_tokens(profile)
+
+    assert result["tokens"]["access_token"] == "new-access"
+    assert result["tokens"]["refresh_token"] == "old-refresh"
+    assert result["tokens"]["id_token"] == "old-id"
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_refresh_tokens_failure_returns_original():
     respx.post(REFRESH_URL).mock(return_value=httpx.Response(401))
 
