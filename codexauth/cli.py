@@ -193,8 +193,8 @@ def status_cmd():
     help=(
         "Import all profile JSON files from CODEXAUTH_SYNC_DIR into ~/.codexauth/tokens.\n\n"
         "The sync directory is read from CODEXAUTH_SYNC_DIR in a repo-local .env file.\n"
-        "This command imports every discovered profile by default. When a profile would overwrite an existing\n"
-        "local profile, it shows both modified timestamps and asks for confirmation."
+        "This command imports every discovered profile by default. If the incoming profile is older than the\n"
+        "existing local profile, it shows both modified timestamps and asks for confirmation."
     ),
 )
 def import_cmd():
@@ -210,8 +210,8 @@ def import_cmd():
     help=(
         "Export all local profiles from ~/.codexauth/tokens into CODEXAUTH_SYNC_DIR.\n\n"
         "The sync directory is read from CODEXAUTH_SYNC_DIR in a repo-local .env file.\n"
-        "This command exports every stored profile by default. When a profile would overwrite an existing file in\n"
-        "the sync directory, it shows both modified timestamps and asks for confirmation."
+        "This command exports every stored profile by default. If the local profile is older than the existing file\n"
+        "in the sync directory, it shows both modified timestamps and asks for confirmation."
     ),
 )
 def export_cmd():
@@ -303,7 +303,9 @@ def _run_import(sync_dir: Path) -> None:
 
     imported = 0
     for candidate in candidates:
-        if candidate.will_overwrite and not _confirm_overwrite("import", candidate, "external", "local"):
+        if candidate.should_confirm_overwrite and not _confirm_overwrite(
+            "import", candidate, "external", "local"
+        ):
             continue
         import_profile(candidate.name, candidate.source_path)
         imported += 1
@@ -321,7 +323,9 @@ def _run_export(sync_dir: Path) -> None:
 
     exported = 0
     for candidate in candidates:
-        if candidate.will_overwrite and not _confirm_overwrite("export", candidate, "local", "external"):
+        if candidate.should_confirm_overwrite and not _confirm_overwrite(
+            "export", candidate, "local", "external"
+        ):
             continue
         export_profile(candidate.name, candidate.dest_path)
         exported += 1

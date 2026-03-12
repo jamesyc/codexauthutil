@@ -19,8 +19,11 @@ class SyncCandidate:
     dest_modified: datetime | None
 
     @property
-    def will_overwrite(self) -> bool:
-        return self.dest_modified is not None
+    def should_confirm_overwrite(self) -> bool:
+        return (
+            self.dest_modified is not None
+            and self.source_modified < self.dest_modified
+        )
 
 
 def profile_path(name: str) -> Path:

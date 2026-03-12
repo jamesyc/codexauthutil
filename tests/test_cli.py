@@ -156,11 +156,40 @@ def test_import_imports_all_profiles_by_default(runner, sample_profile, monkeypa
     assert int(imported_path.stat().st_mtime) == 1_700_000_000
 
 
-def test_import_overwrite_shows_timestamps_and_can_skip(
+def test_import_newer_external_overwrites_without_prompt(
     runner, sample_profile, monkeypatch, tmp_path
 ):
     external_timestamp = 1_700_000_000
     local_timestamp = 1_600_000_000
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    external = dict(sample_profile)
+    external["tokens"] = dict(sample_profile["tokens"])
+    external["tokens"]["account_id"] = "external-account-id"
+    external_path = sync_dir / "work.json"
+    external_path.write_text(json.dumps(external))
+    os.utime(external_path, (external_timestamp, external_timestamp))
+
+    store_module.save_profile("work", sample_profile)
+    local_path = store_module.TOKENS_DIR / "work.json"
+    os.utime(local_path, (local_timestamp, local_timestamp))
+
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(cli, ["import"])
+
+    assert result.exit_code == 0
+    assert "Import profile 'work' from external modified" not in result.output
+    assert "Imported profile work" in result.output
+    assert store_module.load_profile("work")["tokens"]["account_id"] == "external-account-id"
+
+
+def test_import_older_external_shows_timestamps_and_can_skip(
+    runner, sample_profile, monkeypatch, tmp_path
+):
+    external_timestamp = 1_600_000_000
+    local_timestamp = 1_700_000_000
     sync_dir = tmp_path / "sync"
     sync_dir.mkdir()
     external = dict(sample_profile)
@@ -208,9 +237,36 @@ def test_export_exports_all_profiles_by_default(
     assert int(exported.stat().st_mtime) == 1_700_000_000
 
 
-def test_export_overwrite_can_confirm(runner, saved_profile, monkeypatch, tmp_path):
+def test_export_newer_local_overwrites_without_prompt(
+    runner, saved_profile, monkeypatch, tmp_path
+):
     external_timestamp = 1_600_000_000
     local_timestamp = 1_700_000_000
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    existing = sync_dir / "work.json"
+    existing.write_text(json.dumps({"auth_mode": "old"}))
+    os.utime(existing, (external_timestamp, external_timestamp))
+
+    local_path = store_module.TOKENS_DIR / "work.json"
+    os.utime(local_path, (local_timestamp, local_timestamp))
+
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(cli, ["export"])
+
+    assert result.exit_code == 0
+    assert "Export profile 'work' from local modified" not in result.output
+    assert "Exported profile work" in result.output
+    assert json.loads(existing.read_text())["auth_mode"] == "chatgpt"
+
+
+def test_export_older_local_shows_timestamps_and_can_confirm(
+    runner, saved_profile, monkeypatch, tmp_path
+):
+    external_timestamp = 1_700_000_000
+    local_timestamp = 1_600_000_000
     sync_dir = tmp_path / "sync"
     sync_dir.mkdir()
     existing = sync_dir / "work.json"
