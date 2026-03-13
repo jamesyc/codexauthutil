@@ -75,7 +75,10 @@ Shows all profiles with live quota usage, then prompts you to activate one:
 ```bash
 ./codexauth.py list
 ```
-
+Or just
+```bash
+./codexauth.py
+```
 ```
   #  Name        Mode      5h Used        Weekly
   1  work        chatgpt   ████░ 74%      ████░ 74%      ●
