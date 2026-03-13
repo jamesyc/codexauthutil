@@ -6,6 +6,8 @@ A small CLI utility for managing multiple [OpenAI Codex](https://github.com/open
 
 Codex stores its auth token at `~/.codex/auth.json`. If you have multiple OpenAI accounts (e.g. work and personal), swapping between them means manually copying files. This tool manages that for you and shows how much of your 5-hour and weekly quota each account has used.
 
+This tool also can help you sync auth tokens between different computers. 
+
 ## Requirements
 
 - Python 3.10+
