@@ -6,7 +6,7 @@ import stat
 import subprocess
 import base64
 import importlib
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -421,9 +421,19 @@ def test_list_no_profiles(runner):
     assert "No profiles" in result.output
 
 
-def test_list_shows_profiles(runner, saved_profile):
+def test_list_shows_profiles(runner, saved_profile, monkeypatch):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 3, 13, 15, 4, 5, tzinfo=timezone.utc)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(cli_module, "datetime", FrozenDateTime)
+
     result = runner.invoke(cli, ["list", "--no-usage", "--no-interactive"])
+
     assert result.exit_code == 0
+    assert "2026-03-13 15:04:05 UTC" in result.output
     assert "work" in result.output
 
 

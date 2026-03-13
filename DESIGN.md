@@ -689,6 +689,7 @@ The user interface is optimized for quick local use:
 
 - Click provides a small, familiar CLI surface.
 - Rich renders a readable table with color and compact usage bars.
+- `list` prints the current datetime immediately above the rendered profile table.
 - The default `list` flow doubles as a launcher by offering an interactive activation prompt.
 
 The display logic also distinguishes between:

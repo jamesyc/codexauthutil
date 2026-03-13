@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from datetime import datetime
 from pathlib import Path
 
 import click
@@ -113,6 +114,7 @@ def _show_profiles(no_interactive: bool, no_usage: bool) -> None:
         with console.status("[dim]Fetching usage...[/dim]"):
             usage_map = asyncio.run(fetch_all_usage(all_data))
 
+    console.print(f"[dim]{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}[/dim]")
     console.print(render_table(profiles, all_data, usage_map, active))
     _maybe_offer_push_after_reconcile(reconcile_result, allow_prompt=not no_interactive)
 
