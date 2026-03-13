@@ -13,7 +13,7 @@ This tool also can help you sync auth tokens between different computers.
 - Python 3.10+
 - [`uv`](https://docs.astral.sh/uv/) — for direct execution without installing
 
-## Installation
+# Installation
 
 ### Option A — Run directly (no install)
 
@@ -33,9 +33,9 @@ pip install -e .
 codexauth --help
 ```
 
-## Usage
+# Usage
 
-### Add a profile
+## Add a profile
 
 Save the currently active `~/.codex/auth.json` as a named profile:
 
@@ -58,14 +58,17 @@ Bootstrap a fresh ChatGPT-backed profile through the browser OAuth flow:
 
 ```bash
 ./codexauth.py login
+```
+or
+```bash
 ./codexauth.py login work
 ```
 
-This uses the hard-coded Codex/OpenClaw OAuth client and redirect URI `http://localhost:1455/auth/callback`, and sends the same extra authorize parameters Codex/OpenClaw use.
+This uses the hard-coded Codex OAuth client and redirect URI `http://localhost:1455/auth/callback`, and sends the same extra authorize parameters Codex/OpenClaw use.
 
 The command prints an authorization URL, waits for you to paste back the full localhost callback URL, exchanges the authorization code for tokens, asks for a profile name if you did not pass one on the command line, saves the profile, and then shows the normal profile list.
 
-### List profiles
+## List profiles
 
 Shows all profiles with live quota usage, then prompts you to activate one:
 
@@ -89,7 +92,7 @@ Flags:
 - `--no-interactive` — print the table and exit (useful for scripting)
 - `--no-usage` — skip the API call for faster output
 
-### Activate a profile
+## Activate a profile
 
 Directly activate by name (no prompt):
 
@@ -99,20 +102,20 @@ Directly activate by name (no prompt):
 
 This copies the profile to `~/.codex/auth.json` and backs up the previous file to `~/.codexauth/auth.json.bak`.
 
-### Check active profile
+## Check active profile
 
 ```bash
 ./codexauth.py status
 # Active: work
 ```
 
-### Remove a profile
+## Remove a profile
 
 ```bash
 ./codexauth.py remove personal
 ```
 
-### Configure sync
+# Configure sync
 
 `import` and `export` read a sync directory from a repo-local `.env` file:
 
@@ -122,7 +125,7 @@ echo 'CODEXAUTH_SYNC_DIR=~/codex-profiles' > .env
 
 The path is expanded with your home directory, so `~/...` works.
 
-### Pull shared changes
+## Pull shared changes
 
 If the configured sync directory is a Git repo, fetch remote changes and then import every profile with:
 
@@ -132,7 +135,7 @@ If the configured sync directory is a Git repo, fetch remote changes and then im
 
 `pull` reads `CODEXAUTH_SYNC_DIR` from `.env`, runs `git pull`, and then imports all `*.json` profiles from that directory. If a profile would overwrite an existing local copy, it shows both modified timestamps before prompting.
 
-### Publish local changes
+## Publish local changes
 
 To export every local profile and publish the result from the sync repo:
 
@@ -153,7 +156,7 @@ git push
 
 If there is nothing staged after `git add .`, `push` exits successfully without creating a commit.
 
-## How usage data works
+# How usage data works
 
 Quota is fetched from `https://chatgpt.com/backend-api/wham/usage` using the `access_token` stored in each profile's `auth.json`. Two windows are displayed:
 
@@ -168,7 +171,7 @@ Quota is fetched from `https://chatgpt.com/backend-api/wham/usage` using the `ac
 
 If refresh succeeds, the local stored profile is updated with the new tokens and a fresh `last_refresh` timestamp.
 
-## File layout
+# File layout
 
 Profiles are stored in `~/.codexauth/`:
 
@@ -183,7 +186,7 @@ Profiles are stored in `~/.codexauth/`:
 
 The store directory is created with `chmod 700` and individual token files with `chmod 600`.
 
-## Sync directory layout
+# Sync directory layout
 
 When `CODEXAUTH_SYNC_DIR` is configured, imported and exported profiles are stored as plain JSON files:
 
@@ -195,7 +198,7 @@ When `CODEXAUTH_SYNC_DIR` is configured, imported and exported profiles are stor
 
 These files are copied with metadata preserved so modified times stay meaningful during overwrite prompts.
 
-## Notes
+# Notes
 
 - Stored profiles and backups are local plaintext JSON files; they are permission-restricted but not encrypted.
 - Hidden `import` and `export` commands still exist for testing lower-level sync behavior, but the normal user workflow is `pull` and `push`.
