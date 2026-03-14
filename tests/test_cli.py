@@ -1,11 +1,11 @@
 """End-to-end CLI tests using click's CliRunner."""
 
+import base64
+import importlib
 import json
 import os
 import stat
 import subprocess
-import base64
-import importlib
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -14,6 +14,7 @@ import pytest
 from click.testing import CliRunner
 
 from codexauth.cli import cli
+import codexauth.display as display_module
 import codexauth.git_sync as git_sync_module
 import codexauth.oauth as oauth_module
 import codexauth.store as store_module
@@ -435,6 +436,37 @@ def test_list_shows_profiles(runner, saved_profile, monkeypatch):
     assert result.exit_code == 0
     assert "2026-03-13 15:04:05 UTC" in result.output
     assert "work" in result.output
+
+
+def test_list_shows_usage_reset_columns(runner, saved_profile, monkeypatch):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 3, 13, 15, 4, 5, tzinfo=timezone.utc)
+            return value if tz is None else value.astimezone(tz)
+
+    async def fake_fetch_all_usage(profiles):
+        return {
+            "work": cli_module.UsageResult(
+                primary_pct=74,
+                secondary_pct=38,
+                primary_reset_at=datetime(2026, 3, 13, 19, 16, 5, tzinfo=timezone.utc),
+                secondary_reset_at=datetime(2026, 3, 15, 18, 4, 5, tzinfo=timezone.utc),
+            )
+        }
+
+    monkeypatch.setattr(cli_module, "datetime", FrozenDateTime)
+    monkeypatch.setattr(display_module, "datetime", FrozenDateTime)
+    monkeypatch.setattr(cli_module, "fetch_all_usage", fake_fetch_all_usage)
+
+    result = runner.invoke(cli, ["list", "--no-interactive"], terminal_width=140)
+
+    assert result.exit_code == 0
+    assert "5h Left" in result.output
+    assert "74%" in result.output
+    assert "38%" in result.output
+    assert "4h 12m" in result.output
+    assert "2d 3h" in result.output
 
 
 def test_list_no_usage_reconciles_active_profile(runner, monkeypatch):

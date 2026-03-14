@@ -8,6 +8,7 @@
 - activate one profile into `~/.codex/auth.json`
 - inspect which profile is currently active
 - view quota usage for ChatGPT-backed profiles
+- view quota usage and reset countdowns for ChatGPT-backed profiles
 
 The project is intentionally lightweight. It is a local tool, not a service, and it uses the filesystem as its primary storage layer.
 
@@ -15,7 +16,7 @@ The project is intentionally lightweight. It is a local tool, not a service, and
 
 - Provide a simple CLI for saving and switching between named auth profiles.
 - Preserve the currently installed `~/.codex/auth.json` before replacing it.
-- Surface usage information in a human-friendly terminal view.
+- Surface usage information and reset countdowns in a human-friendly terminal view.
 - Refresh ChatGPT OAuth tokens automatically when they are stale.
 - Support bootstrapping a new ChatGPT-backed profile through a manual browser OAuth flow.
 - Support pull/push sync against a shared profile folder defined in a `.env` file.
@@ -99,6 +100,11 @@ Within that external directory, profile files are expected to be stored as:
 - Lists all stored profiles.
 - Optionally fetches usage data unless `--no-usage` is passed.
 - Shows the current active profile in a Rich table.
+- For ChatGPT-backed profiles with live usage data, shows four usage-related columns:
+  - 5-hour usage percentage
+  - time left until the 5-hour window resets
+  - weekly usage percentage
+  - time left until the weekly window resets
 - Can prompt the user to activate a profile interactively unless `--no-interactive` is passed.
 
 ### `codexauth add <name>`

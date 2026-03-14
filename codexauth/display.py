@@ -1,5 +1,7 @@
 """Rich-based table rendering and interactive menu."""
 
+from datetime import datetime, timezone
+
 from rich import box
 from rich.console import Console
 from rich.table import Table
@@ -23,6 +25,31 @@ def _fmt_pct(pct: float | None, error: str | None) -> str:
     return f"[{color}]{_bar(pct)} {pct:.0f}%[/{color}]"
 
 
+def _fmt_time_left(reset_at, error: str | None, now: datetime | None = None) -> str:
+    if error == "expired":
+        return "[red]expired[/red]"
+    if error or reset_at is None:
+        return "[dim]N/A[/dim]"
+
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+
+    seconds = int((reset_at - current).total_seconds())
+    if seconds <= 0:
+        return "[red]expired[/red]"
+
+    days, rem = divmod(seconds, 24 * 3600)
+    hours, rem = divmod(rem, 3600)
+    minutes, _ = divmod(rem, 60)
+
+    if days > 0:
+        return f"{days}d {hours}h"
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
+
+
 def render_table(
     profiles: list[str],
     profile_data: dict[str, dict],
@@ -34,7 +61,9 @@ def render_table(
     table.add_column("Name", style="bold")
     table.add_column("Mode", style="dim")
     table.add_column("5h Used", min_width=13)
+    table.add_column("5h Left", min_width=10)
     table.add_column("Weekly", min_width=13)
+    table.add_column("Weekly Left", min_width=12)
     table.add_column("", width=2)
 
     for i, name in enumerate(profiles, 1):
@@ -46,7 +75,9 @@ def render_table(
             name,
             mode,
             _fmt_pct(u.primary_pct, u.error),
+            _fmt_time_left(u.primary_reset_at, u.error),
             _fmt_pct(u.secondary_pct, u.error),
+            _fmt_time_left(u.secondary_reset_at, u.error),
             active_marker,
         )
     return table

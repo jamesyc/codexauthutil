@@ -1,10 +1,10 @@
 # codexauthutil
 
-A small CLI utility for managing multiple [OpenAI Codex](https://github.com/openai/codex) `auth.json` profiles. Switch between accounts instantly and see live quota usage for each one.
+A small CLI utility for managing multiple [OpenAI Codex](https://github.com/openai/codex) `auth.json` profiles. Switch between accounts instantly and see live quota usage and reset countdowns for each one.
 
 ## Why
 
-Codex stores its auth token at `~/.codex/auth.json`. If you have multiple OpenAI accounts (e.g. work and personal), swapping between them means manually copying files. This tool manages that for you and shows how much of your 5-hour and weekly quota each account has used.
+Codex stores its auth token at `~/.codex/auth.json`. If you have multiple OpenAI accounts (e.g. work and personal), swapping between them means manually copying files. This tool manages that for you and shows how much of your 5-hour and weekly quota each account has used, plus how long remains until each window resets.
 
 This tool also can help you sync auth tokens between different computers. 
 
@@ -80,9 +80,9 @@ Or just
 ./codexauth.py
 ```
 ```
-  #  Name        Mode      5h Used        Weekly
-  1  work        chatgpt   ████░ 74%      ████░ 74%      ●
-  2  personal    chatgpt   █░░░░ 12%      ██░░░ 38%
+  #  Name        Mode      5h Used        5h Left   Weekly        Weekly Left
+  1  work        chatgpt   ████░ 74%      4h 12m    ████░ 74%     2d 3h        ●
+  2  personal    chatgpt   █░░░░ 12%      53m       ██░░░ 38%     5d 8h
 
 Activate token (enter number, or q to quit): _
 ```
@@ -161,16 +161,19 @@ If there is nothing staged after `git add .`, `push` exits successfully without 
 
 # How usage data works
 
-Quota is fetched from `https://chatgpt.com/backend-api/wham/usage` using the `access_token` stored in each profile's `auth.json`. Two windows are displayed:
+Quota is fetched from `https://chatgpt.com/backend-api/wham/usage` using the `access_token` stored in each profile's `auth.json`. Two usage columns and two reset countdown columns are displayed:
 
 | Column | Window | Description |
 |--------|--------|-------------|
 | **5h Used** | 5 hours | Short-term compute quota |
+| **5h Left** | 5 hours | Time remaining until the short-term quota window resets |
 | **Weekly** | 7 days | Rolling weekly quota |
+| **Weekly Left** | 7 days | Time remaining until the weekly quota window resets |
 
 - Tokens are automatically refreshed if they are older than 8 days
 - `api_key` mode profiles show `N/A` (no quota limits apply)
 - Expired or revoked tokens show `expired` in red
+- Reset countdowns render compact durations such as `53m`, `4h 12m`, or `2d 3h`
 
 If refresh succeeds, the local stored profile is updated with the new tokens and a fresh `last_refresh` timestamp.
 

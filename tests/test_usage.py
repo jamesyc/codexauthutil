@@ -2,6 +2,7 @@
 
 import json
 import os
+from datetime import datetime, timezone
 
 import pytest
 import respx
@@ -39,6 +40,8 @@ async def test_fetch_usage_success():
     assert name == "work"
     assert result.primary_pct == 45
     assert result.secondary_pct == 74
+    assert result.primary_reset_at == datetime.fromtimestamp(9999999999, tz=timezone.utc)
+    assert result.secondary_reset_at == datetime.fromtimestamp(9999999999, tz=timezone.utc)
     assert result.error is None
 
 
