@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -96,6 +97,7 @@ def list_cmd(no_interactive, no_usage):
 
 def _show_profiles(no_interactive: bool, no_usage: bool) -> None:
     """Render stored profiles and optionally prompt for activation."""
+    ctx = click.get_current_context(silent=True)
     reconcile_result = _run_preflight_reconciliation(prompt_on_unsafe=False)
 
     profiles = list_profiles()
@@ -115,7 +117,10 @@ def _show_profiles(no_interactive: bool, no_usage: bool) -> None:
             usage_map = asyncio.run(fetch_all_usage(all_data))
 
     console.print(f"[dim]{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}[/dim]")
-    console.print(render_table(profiles, all_data, usage_map, active))
+    terminal_width = getattr(ctx, "terminal_width", None) if ctx else None
+    if terminal_width is None:
+        terminal_width = shutil.get_terminal_size(fallback=(console.width, 24)).columns
+    console.print(render_table(profiles, all_data, usage_map, active, width=terminal_width))
     _maybe_offer_push_after_reconcile(reconcile_result, allow_prompt=not no_interactive)
 
     if not no_interactive:

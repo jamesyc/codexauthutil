@@ -44,3 +44,77 @@ def test_render_table_shows_usage_and_time_left_columns(monkeypatch):
     assert "38%" in output
     assert "4h 12m" in output
     assert "2d 3h" in output
+
+
+def test_render_table_uses_stacked_layout_on_narrow_width(monkeypatch):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 3, 13, 15, 4, 5, tzinfo=timezone.utc)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(display_module, "datetime", FrozenDateTime)
+
+    table = render_table(
+        profiles=["work"],
+        profile_data={"work": {"auth_mode": "chatgpt"}},
+        usage_map={
+            "work": UsageResult(
+                primary_pct=74,
+                secondary_pct=38,
+                primary_reset_at=datetime(2026, 3, 13, 19, 16, 5, tzinfo=timezone.utc),
+                secondary_reset_at=datetime(2026, 3, 15, 18, 4, 5, tzinfo=timezone.utc),
+            )
+        },
+        active="work",
+        width=50,
+    )
+
+    console = Console(record=True, width=50)
+    console.print(table)
+    output = console.export_text()
+
+    assert "1. work" in output
+    assert "chatgpt" in output
+    assert "5h ████░  74%/4h 12m" in output
+    assert "wk" in output
+    assert "██░░░  38%/2d 3h" in output
+    assert "4h 12m" in output
+    assert "2d 3h" in output
+
+
+def test_render_table_uses_compact_table_on_medium_width(monkeypatch):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 3, 13, 15, 4, 5, tzinfo=timezone.utc)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(display_module, "datetime", FrozenDateTime)
+
+    table = render_table(
+        profiles=["work"],
+        profile_data={"work": {"auth_mode": "chatgpt"}},
+        usage_map={
+            "work": UsageResult(
+                primary_pct=74,
+                secondary_pct=38,
+                primary_reset_at=datetime(2026, 3, 13, 19, 16, 5, tzinfo=timezone.utc),
+                secondary_reset_at=datetime(2026, 3, 15, 18, 4, 5, tzinfo=timezone.utc),
+            )
+        },
+        active="work",
+        width=90,
+    )
+
+    console = Console(record=True, width=90)
+    console.print(table)
+    output = console.export_text()
+
+    assert "Name" in output
+    assert "Md" in output
+    assert "5h L" in output
+    assert "Wk L" in output
+    assert "work" in output
+    assert "4h 12m" in output
+    assert "2d 3h" in output

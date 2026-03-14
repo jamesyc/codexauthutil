@@ -434,7 +434,7 @@ def test_list_shows_profiles(runner, saved_profile, monkeypatch):
     result = runner.invoke(cli, ["list", "--no-usage", "--no-interactive"])
 
     assert result.exit_code == 0
-    assert "2026-03-13 15:04:05 UTC" in result.output
+    assert "2026-03-13" in result.output
     assert "work" in result.output
 
 
@@ -465,6 +465,72 @@ def test_list_shows_usage_reset_columns(runner, saved_profile, monkeypatch):
     assert "5h Left" in result.output
     assert "74%" in result.output
     assert "38%" in result.output
+    assert "4h 12m" in result.output
+    assert "2d 3h" in result.output
+
+
+def test_list_uses_narrow_layout_on_small_terminal(runner, saved_profile, monkeypatch):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 3, 13, 15, 4, 5, tzinfo=timezone.utc)
+            return value if tz is None else value.astimezone(tz)
+
+    async def fake_fetch_all_usage(profiles):
+        return {
+            "work": cli_module.UsageResult(
+                primary_pct=74,
+                secondary_pct=38,
+                primary_reset_at=datetime(2026, 3, 13, 19, 16, 5, tzinfo=timezone.utc),
+                secondary_reset_at=datetime(2026, 3, 15, 18, 4, 5, tzinfo=timezone.utc),
+            )
+        }
+
+    monkeypatch.setattr(cli_module, "datetime", FrozenDateTime)
+    monkeypatch.setattr(display_module, "datetime", FrozenDateTime)
+    monkeypatch.setattr(cli_module, "fetch_all_usage", fake_fetch_all_usage)
+
+    result = runner.invoke(cli, ["list", "--no-interactive"], terminal_width=50)
+
+    assert result.exit_code == 0
+    assert "1. work" in result.output
+    assert "chatgpt" in result.output
+    assert "5h ████░  74%/4h 12m" in result.output
+    assert "wk" in result.output
+    assert "██░░░  38%/2d 3h" in result.output
+    assert "4h 12m" in result.output
+    assert "2d 3h" in result.output
+
+
+def test_list_uses_compact_table_on_medium_terminal(runner, saved_profile, monkeypatch):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 3, 13, 15, 4, 5, tzinfo=timezone.utc)
+            return value if tz is None else value.astimezone(tz)
+
+    async def fake_fetch_all_usage(profiles):
+        return {
+            "work": cli_module.UsageResult(
+                primary_pct=74,
+                secondary_pct=38,
+                primary_reset_at=datetime(2026, 3, 13, 19, 16, 5, tzinfo=timezone.utc),
+                secondary_reset_at=datetime(2026, 3, 15, 18, 4, 5, tzinfo=timezone.utc),
+            )
+        }
+
+    monkeypatch.setattr(cli_module, "datetime", FrozenDateTime)
+    monkeypatch.setattr(display_module, "datetime", FrozenDateTime)
+    monkeypatch.setattr(cli_module, "fetch_all_usage", fake_fetch_all_usage)
+
+    result = runner.invoke(cli, ["list", "--no-interactive"], terminal_width=90)
+
+    assert result.exit_code == 0
+    assert "Name" in result.output
+    assert "Md" in result.output
+    assert "5h L" in result.output
+    assert "Wk L" in result.output
+    assert "work" in result.output
     assert "4h 12m" in result.output
     assert "2d 3h" in result.output
 

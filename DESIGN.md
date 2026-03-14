@@ -99,12 +99,13 @@ Within that external directory, profile files are expected to be stored as:
 
 - Lists all stored profiles.
 - Optionally fetches usage data unless `--no-usage` is passed.
-- Shows the current active profile in a Rich table.
+- Shows the current active profile in a width-aware Rich view.
 - For ChatGPT-backed profiles with live usage data, shows four usage-related columns:
   - 5-hour usage percentage
   - time left until the 5-hour window resets
   - weekly usage percentage
   - time left until the weekly window resets
+- Uses the full multi-column table on wide terminals, a compact table on medium widths, and a stacked per-profile layout on narrow screens so phone-sized terminals remain readable.
 - Can prompt the user to activate a profile interactively unless `--no-interactive` is passed.
 
 ### `codexauth add <name>`
@@ -694,9 +695,10 @@ On any failure, the original profile is preserved. This favors resilience over s
 The user interface is optimized for quick local use:
 
 - Click provides a small, familiar CLI surface.
-- Rich renders a readable table with color and compact usage bars.
-- `list` prints the current datetime immediately above the rendered profile table.
+- Rich renders a readable profile view with color and compact usage bars.
+- `list` prints the current datetime immediately above the rendered profile view.
 - The default `list` flow doubles as a launcher by offering an interactive activation prompt.
+- The list display is responsive to terminal width: wide terminals keep the full table, medium terminals collapse to a compact table, and narrow terminals switch to a stacked format that remains usable on phone-width screens.
 
 The display logic also distinguishes between:
 
