@@ -378,7 +378,9 @@ Usage lookup is only attempted for ChatGPT-backed profiles. For each eligible pr
 2. Check whether the profile appears stale using `last_refresh`.
 3. Refresh tokens first if needed.
 4. Send a request to the usage endpoint.
-5. Extract primary and secondary usage percentages from the response.
+5. Extract the standard primary and secondary usage windows from the top-level `rate_limit` object.
+6. Extract any named additional limits from `additional_rate_limits[]`, preserving each entry's `limit_name`.
+7. Apply presentation-friendly labels in the renderer where needed; for example, the UI shortens `GPT-5.3-Codex-Spark` to `Spark` and `GPT-5.3-Codex-Spark Weekly` to `Spark Weekly`.
 
 The CLI fetches usage concurrently for all profiles with `asyncio.gather`, which keeps the list command responsive even when several profiles are stored.
 

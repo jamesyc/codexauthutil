@@ -542,9 +542,9 @@ def test_list_uses_narrow_layout_on_small_terminal(runner, saved_profile, monkey
     assert result.exit_code == 0
     assert "1. work" in result.output
     assert "chatgpt" in result.output
-    assert "5h ████░  74%/4h 12m" in result.output
+    assert "5h     ████░  74%/4h 12m" in result.output
     assert "wk" in result.output
-    assert "██░░░  38%/2d 3h" in result.output
+    assert "wk     ██░░░  38%/2d 3h" in result.output
     assert "4h 12m" in result.output
     assert "2d 3h" in result.output
 

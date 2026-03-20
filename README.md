@@ -161,7 +161,7 @@ If there is nothing staged after `git add .`, `push` exits successfully without 
 
 # How usage data works
 
-Quota is fetched from `https://chatgpt.com/backend-api/wham/usage` using the `access_token` stored in each profile's `auth.json`. Two usage columns and two reset countdown columns are displayed:
+Quota is fetched from `https://chatgpt.com/backend-api/wham/usage` using the `access_token` stored in each profile's `auth.json`. The list view always shows the standard 5-hour and weekly windows from the top-level `rate_limit` object. If the API also returns named limits under `additional_rate_limits`, the CLI renders those as extra columns. The current UI shortens `GPT-5.3-Codex-Spark` to `Spark` so the table stays readable on narrow terminals:
 
 | Column | Window | Description |
 |--------|--------|-------------|
@@ -169,6 +169,10 @@ Quota is fetched from `https://chatgpt.com/backend-api/wham/usage` using the `ac
 | **5h Left** | 5 hours | Time remaining until the short-term quota window resets |
 | **Weekly** | 7 days | Rolling weekly quota |
 | **Weekly Left** | 7 days | Time remaining until the weekly quota window resets |
+| **Spark** | API-defined | Additional named usage limit when `additional_rate_limits` includes `GPT-5.3-Codex-Spark` |
+| **Spark Left** | API-defined | Time remaining until that named limit's primary window resets |
+| **Spark Weekly** | API-defined | Weekly usage for that named limit when available |
+| **Spark Weekly Left** | API-defined | Time remaining until that named limit's weekly window resets |
 
 - Tokens are automatically refreshed if they are older than 8 days
 - `api_key` mode profiles show `N/A` (no quota limits apply)

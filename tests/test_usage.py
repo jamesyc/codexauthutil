@@ -48,6 +48,66 @@ async def test_fetch_usage_success():
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_fetch_usage_parses_spark_window():
+    respx.get(USAGE_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "plan_type": "pro",
+                "rate_limit": {
+                    "primary_window": {"used_percent": 45, "reset_at": 9999999999},
+                    "secondary_window": {"used_percent": 74, "reset_at": 9999999999},
+                },
+                "additional_rate_limits": [
+                    {
+                        "limit_name": "GPT-5.3-Codex-Spark",
+                        "rate_limit": {
+                            "primary_window": {"used_percent": 12, "reset_at": 9999999000},
+                            "secondary_window": {"used_percent": 9, "reset_at": 9999998000},
+                        },
+                    }
+                ],
+            },
+        )
+    )
+
+    _, result, refreshed = await fetch_usage("work", FRESH_PROFILE)
+
+    assert result.windows["additional_gpt_5_3_codex_spark_primary_window"].label == "GPT-5.3-Codex-Spark"
+    assert result.windows["additional_gpt_5_3_codex_spark_primary_window"].used_pct == 12
+    assert result.windows["additional_gpt_5_3_codex_spark_primary_window"].reset_at == datetime.fromtimestamp(9999999000, tz=timezone.utc)
+    assert result.windows["additional_gpt_5_3_codex_spark_secondary_window"].label == "GPT-5.3-Codex-Spark Weekly"
+    assert result.windows["additional_gpt_5_3_codex_spark_secondary_window"].used_pct == 9
+    assert refreshed is False
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_fetch_usage_handles_null_additional_rate_limits():
+    respx.get(USAGE_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "plan_type": "plus",
+                "rate_limit": {
+                    "primary_window": {"used_percent": 11, "reset_at": 9999999999},
+                    "secondary_window": {"used_percent": 9, "reset_at": 9999999000},
+                },
+                "additional_rate_limits": None,
+            },
+        )
+    )
+
+    _, result, refreshed = await fetch_usage("work", FRESH_PROFILE)
+
+    assert result.primary_pct == 11
+    assert result.secondary_pct == 9
+    assert result.windows.keys() == {"primary_window", "secondary_window"}
+    assert refreshed is False
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_fetch_usage_expired():
     respx.get(USAGE_URL).mock(return_value=httpx.Response(401))
 
