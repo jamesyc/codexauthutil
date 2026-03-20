@@ -124,8 +124,11 @@ def _show_profiles(no_interactive: bool, no_usage: bool) -> None:
     if terminal_width is None:
         terminal_width = shutil.get_terminal_size(fallback=(console.width, 24)).columns
     console.print(render_table(profiles, all_data, usage_map, active, width=terminal_width))
-    _maybe_offer_push_after_reconcile(reconcile_result, allow_prompt=not no_interactive)
-    _maybe_offer_push_after_refresh(refreshed_profiles, allow_prompt=not no_interactive)
+    _maybe_offer_push_after_list_updates(
+        reconcile_result=reconcile_result,
+        refreshed_profiles=refreshed_profiles,
+        allow_prompt=not no_interactive,
+    )
 
     if not no_interactive:
         choice = interactive_prompt(profiles)
@@ -452,6 +455,28 @@ def _maybe_offer_push_after_reconcile(result, allow_prompt: bool) -> None:
         ],
         prompt="Reconciliation updated local store. Push these changes now? [y/N]: ",
     )
+
+
+def _maybe_offer_push_after_list_updates(
+    reconcile_result,
+    refreshed_profiles: list[str],
+    allow_prompt: bool,
+) -> None:
+    if not allow_prompt:
+        return
+
+    if reconcile_result and reconcile_result.store_updated_from_auth:
+        _maybe_offer_push_for_local_updates(
+            header_lines=[
+                "##### Local store updated during list      #####",
+                _format_push_banner_line("Updated active auth and stale tokens"),
+                "##### Push to sync these local changes.   #####",
+            ],
+            prompt="List updated local store. Push these changes now? [y/N]: ",
+        )
+        return
+
+    _maybe_offer_push_after_refresh(refreshed_profiles, allow_prompt=True)
 
 
 def _maybe_offer_push_after_refresh(refreshed_profiles: list[str], allow_prompt: bool) -> None:

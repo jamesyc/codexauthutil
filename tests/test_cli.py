@@ -661,6 +661,54 @@ def test_list_no_interactive_skips_push_prompt_after_refresh(runner, saved_profi
     assert "Refreshed stale stored tokens" not in result.output
 
 
+def test_list_prompts_only_once_when_reconcile_and_refresh_both_update_store(
+    runner,
+    monkeypatch,
+    tmp_path,
+):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    profile = {
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": None,
+        "tokens": {
+            "id_token": _jwt({"iss": "https://auth.example", "sub": "user-1"}),
+            "access_token": "stored-access",
+            "refresh_token": "refresh",
+            "account_id": "acct-1",
+        },
+        "last_refresh": "2025-01-01T00:00:00+00:00",
+    }
+    store_module.save_profile("work", profile)
+    store_module.set_active("work")
+    auth = json.loads(json.dumps(profile))
+    auth["tokens"]["access_token"] = "auth-access"
+    store_module.save_codex_auth(auth)
+
+    prompts = []
+
+    async def fake_fetch_all_usage(profiles):
+        return usage_module.UsageFetchSummary(
+            usage_map={"work": cli_module.UsageResult(error="n/a")},
+            refreshed_profiles=["work"],
+        )
+
+    monkeypatch.setattr(cli_module, "fetch_all_usage", fake_fetch_all_usage)
+    monkeypatch.setattr(cli_module, "interactive_prompt", lambda profiles: None)
+    monkeypatch.setattr(cli_module, "_push_sync_changes", lambda sync_dir_arg: None)
+    monkeypatch.setattr(cli_module, "_confirm_yes_no", lambda prompt: prompts.append(prompt) or False)
+
+    result = runner.invoke(cli, ["list"])
+
+    assert result.exit_code == 0
+    assert "Reconciled active profile 'work'" in result.output
+    assert "Local store updated during list" in result.output
+    assert prompts == ["List updated local store. Push these changes now? [y/N]: "]
+
+
 def test_import_requires_sync_dir(runner, monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
 
