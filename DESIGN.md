@@ -221,6 +221,11 @@ reconciliation first, refresh second, then render the list.
    sync directory is configured, interactive commands should offer to run
    `push` so that refreshed credentials can be propagated to other machines.
    `list --no-interactive` should skip this prompt.
+5. If `list` refreshes any previously stale stored ChatGPT-backed profiles
+   during usage lookup and a sync directory is configured, interactive `list`
+   should also offer to run `push` so those newly refreshed stored tokens can
+   be propagated to other machines. `list --no-interactive` should skip this
+   prompt as well.
 
 Identity matching should be conservative to avoid accidentally writing one
 account over another. A reasonable baseline is:
@@ -376,6 +381,11 @@ Usage lookup is only attempted for ChatGPT-backed profiles. For each eligible pr
 5. Extract primary and secondary usage percentages from the response.
 
 The CLI fetches usage concurrently for all profiles with `asyncio.gather`, which keeps the list command responsive even when several profiles are stored.
+
+Usage retrieval should also report which stored profiles were actually updated
+by a successful refresh. `list` uses that metadata to decide whether it should
+offer a follow-up `push` for refreshed stored tokens when sync is configured
+and the command is running interactively.
 
 ## Import and Export Design
 
@@ -687,6 +697,8 @@ On a successful refresh:
   trusted way to refresh it from provider data
 - `last_refresh` is set to the current UTC timestamp
 - the updated profile is saved back to local storage with a fresh modified timestamp
+- the usage layer should surface that this profile was refreshed so higher-level
+  CLI flows can treat it as a local update for sync prompting
 
 On any failure, the original profile is preserved. This favors resilience over strict error propagation.
 
@@ -698,6 +710,10 @@ The user interface is optimized for quick local use:
 - Rich renders a readable profile view with color and compact usage bars.
 - `list` prints the current datetime immediately above the rendered profile view.
 - The default `list` flow doubles as a launcher by offering an interactive activation prompt.
+- When `list` updates local store state, either by reconciling the active
+  `auth.json` back into store or by refreshing stale stored tokens during usage
+  lookup, it should offer a follow-up `push` when sync is configured and the
+  command is interactive.
 - The list display is responsive to terminal width: wide terminals keep the full table, medium terminals collapse to a compact table, and narrow terminals switch to a stacked format that remains usable on phone-width screens.
 
 The display logic also distinguishes between:
