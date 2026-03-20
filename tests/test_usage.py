@@ -10,7 +10,7 @@ import httpx
 
 import codexauth.usage as usage_module
 import codexauth.store as store_module
-from codexauth.usage import fetch_usage, fetch_all_usage, UsageResult, USAGE_URL
+from codexauth.usage import fetch_usage, fetch_all_usage, UsageFetchSummary, UsageResult, USAGE_URL
 
 FRESH_PROFILE = {
     "auth_mode": "chatgpt",
@@ -35,7 +35,7 @@ USAGE_RESPONSE = {
 async def test_fetch_usage_success():
     respx.get(USAGE_URL).mock(return_value=httpx.Response(200, json=USAGE_RESPONSE))
 
-    name, result = await fetch_usage("work", FRESH_PROFILE)
+    name, result, refreshed = await fetch_usage("work", FRESH_PROFILE)
 
     assert name == "work"
     assert result.primary_pct == 45
@@ -43,6 +43,7 @@ async def test_fetch_usage_success():
     assert result.primary_reset_at == datetime.fromtimestamp(9999999999, tz=timezone.utc)
     assert result.secondary_reset_at == datetime.fromtimestamp(9999999999, tz=timezone.utc)
     assert result.error is None
+    assert refreshed is False
 
 
 @pytest.mark.asyncio
@@ -50,8 +51,9 @@ async def test_fetch_usage_success():
 async def test_fetch_usage_expired():
     respx.get(USAGE_URL).mock(return_value=httpx.Response(401))
 
-    _, result = await fetch_usage("work", FRESH_PROFILE)
+    _, result, refreshed = await fetch_usage("work", FRESH_PROFILE)
     assert result.error == "expired"
+    assert refreshed is False
 
 
 @pytest.mark.asyncio
@@ -59,15 +61,17 @@ async def test_fetch_usage_expired():
 async def test_fetch_usage_server_error():
     respx.get(USAGE_URL).mock(return_value=httpx.Response(500))
 
-    _, result = await fetch_usage("work", FRESH_PROFILE)
+    _, result, refreshed = await fetch_usage("work", FRESH_PROFILE)
     assert result.error == "n/a"
+    assert refreshed is False
 
 
 @pytest.mark.asyncio
 async def test_fetch_usage_api_key_mode():
     profile = {"auth_mode": "api_key", "OPENAI_API_KEY": "sk-test"}
-    _, result = await fetch_usage("apikey", profile)
+    _, result, refreshed = await fetch_usage("apikey", profile)
     assert result.error == "n/a"
+    assert refreshed is False
 
 
 @pytest.mark.asyncio
@@ -78,8 +82,10 @@ async def test_fetch_all_usage():
     profiles = {"work": FRESH_PROFILE, "personal": FRESH_PROFILE}
     results = await fetch_all_usage(profiles)
 
-    assert set(results.keys()) == {"work", "personal"}
-    assert results["work"].primary_pct == 45
+    assert isinstance(results, UsageFetchSummary)
+    assert set(results.usage_map.keys()) == {"work", "personal"}
+    assert results.usage_map["work"].primary_pct == 45
+    assert results.refreshed_profiles == []
 
 
 @pytest.mark.asyncio
@@ -120,9 +126,10 @@ async def test_fetch_usage_refresh_updates_stored_mtime(monkeypatch, sample_prof
     monkeypatch.setattr(usage_module, "refresh_tokens", fake_refresh)
     monkeypatch.setattr(httpx, "AsyncClient", lambda timeout=15: DummyClient())
 
-    _, result = await fetch_usage("work", stale_profile)
+    _, result, refreshed = await fetch_usage("work", stale_profile)
 
     assert result.error is None
+    assert refreshed is True
     assert stored_path.stat().st_mtime > 1_600_000_000
     saved = json.loads(stored_path.read_text())
     assert saved["tokens"]["access_token"] == "new-access-token"

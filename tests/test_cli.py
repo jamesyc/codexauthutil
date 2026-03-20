@@ -18,6 +18,7 @@ import codexauth.display as display_module
 import codexauth.git_sync as git_sync_module
 import codexauth.oauth as oauth_module
 import codexauth.store as store_module
+import codexauth.usage as usage_module
 from codexauth.sync import format_modified
 
 cli_module = importlib.import_module("codexauth.cli")
@@ -446,14 +447,17 @@ def test_list_shows_usage_reset_columns(runner, saved_profile, monkeypatch):
             return value if tz is None else value.astimezone(tz)
 
     async def fake_fetch_all_usage(profiles):
-        return {
-            "work": cli_module.UsageResult(
-                primary_pct=74,
-                secondary_pct=38,
-                primary_reset_at=datetime(2026, 3, 13, 19, 16, 5, tzinfo=timezone.utc),
-                secondary_reset_at=datetime(2026, 3, 15, 18, 4, 5, tzinfo=timezone.utc),
-            )
-        }
+        return usage_module.UsageFetchSummary(
+            usage_map={
+                "work": cli_module.UsageResult(
+                    primary_pct=74,
+                    secondary_pct=38,
+                    primary_reset_at=datetime(2026, 3, 13, 19, 16, 5, tzinfo=timezone.utc),
+                    secondary_reset_at=datetime(2026, 3, 15, 18, 4, 5, tzinfo=timezone.utc),
+                )
+            },
+            refreshed_profiles=[],
+        )
 
     monkeypatch.setattr(cli_module, "datetime", FrozenDateTime)
     monkeypatch.setattr(display_module, "datetime", FrozenDateTime)
@@ -477,14 +481,17 @@ def test_list_uses_narrow_layout_on_small_terminal(runner, saved_profile, monkey
             return value if tz is None else value.astimezone(tz)
 
     async def fake_fetch_all_usage(profiles):
-        return {
-            "work": cli_module.UsageResult(
-                primary_pct=74,
-                secondary_pct=38,
-                primary_reset_at=datetime(2026, 3, 13, 19, 16, 5, tzinfo=timezone.utc),
-                secondary_reset_at=datetime(2026, 3, 15, 18, 4, 5, tzinfo=timezone.utc),
-            )
-        }
+        return usage_module.UsageFetchSummary(
+            usage_map={
+                "work": cli_module.UsageResult(
+                    primary_pct=74,
+                    secondary_pct=38,
+                    primary_reset_at=datetime(2026, 3, 13, 19, 16, 5, tzinfo=timezone.utc),
+                    secondary_reset_at=datetime(2026, 3, 15, 18, 4, 5, tzinfo=timezone.utc),
+                )
+            },
+            refreshed_profiles=[],
+        )
 
     monkeypatch.setattr(cli_module, "datetime", FrozenDateTime)
     monkeypatch.setattr(display_module, "datetime", FrozenDateTime)
@@ -510,14 +517,17 @@ def test_list_uses_compact_table_on_medium_terminal(runner, saved_profile, monke
             return value if tz is None else value.astimezone(tz)
 
     async def fake_fetch_all_usage(profiles):
-        return {
-            "work": cli_module.UsageResult(
-                primary_pct=74,
-                secondary_pct=38,
-                primary_reset_at=datetime(2026, 3, 13, 19, 16, 5, tzinfo=timezone.utc),
-                secondary_reset_at=datetime(2026, 3, 15, 18, 4, 5, tzinfo=timezone.utc),
-            )
-        }
+        return usage_module.UsageFetchSummary(
+            usage_map={
+                "work": cli_module.UsageResult(
+                    primary_pct=74,
+                    secondary_pct=38,
+                    primary_reset_at=datetime(2026, 3, 13, 19, 16, 5, tzinfo=timezone.utc),
+                    secondary_reset_at=datetime(2026, 3, 15, 18, 4, 5, tzinfo=timezone.utc),
+                )
+            },
+            refreshed_profiles=[],
+        )
 
     monkeypatch.setattr(cli_module, "datetime", FrozenDateTime)
     monkeypatch.setattr(display_module, "datetime", FrozenDateTime)
@@ -589,6 +599,66 @@ def test_list_no_interactive_skips_push_prompt_after_reconciliation(runner, monk
     result = runner.invoke(cli, ["list", "--no-usage", "--no-interactive"])
 
     assert result.exit_code == 0
+
+
+def test_list_prompts_to_push_after_refresh(runner, saved_profile, monkeypatch, tmp_path):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    prompts = []
+    push_calls = []
+
+    async def fake_fetch_all_usage(profiles):
+        return usage_module.UsageFetchSummary(
+            usage_map={"work": cli_module.UsageResult(error="n/a")},
+            refreshed_profiles=["work"],
+        )
+
+    def fake_confirm(prompt):
+        prompts.append(prompt)
+        return False
+
+    def fake_push(sync_dir_arg):
+        push_calls.append(sync_dir_arg)
+
+    monkeypatch.setattr(cli_module, "fetch_all_usage", fake_fetch_all_usage)
+    monkeypatch.setattr(cli_module, "_confirm_yes_no", fake_confirm)
+    monkeypatch.setattr(cli_module, "_push_sync_changes", fake_push)
+    monkeypatch.setattr(cli_module, "interactive_prompt", lambda profiles: None)
+
+    result = runner.invoke(cli, ["list"])
+
+    assert result.exit_code == 0
+    assert "Refreshed stale stored tokens" in result.output
+    assert prompts == ["Refreshed stored tokens for profile work. Push these changes now? [y/N]: "]
+    assert push_calls == []
+
+
+def test_list_no_interactive_skips_push_prompt_after_refresh(runner, saved_profile, monkeypatch, tmp_path):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    async def fake_fetch_all_usage(profiles):
+        return usage_module.UsageFetchSummary(
+            usage_map={"work": cli_module.UsageResult(error="n/a")},
+            refreshed_profiles=["work"],
+        )
+
+    monkeypatch.setattr(cli_module, "fetch_all_usage", fake_fetch_all_usage)
+    monkeypatch.setattr(
+        cli_module,
+        "_confirm_yes_no",
+        lambda prompt: (_ for _ in ()).throw(AssertionError("_confirm_yes_no should not be called")),
+    )
+
+    result = runner.invoke(cli, ["list", "--no-interactive"])
+
+    assert result.exit_code == 0
+    assert "Refreshed stale stored tokens" not in result.output
 
 
 def test_import_requires_sync_dir(runner, monkeypatch, tmp_path):

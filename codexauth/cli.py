@@ -112,9 +112,12 @@ def _show_profiles(no_interactive: bool, no_usage: bool) -> None:
 
     if no_usage:
         usage_map = {n: UsageResult(error="n/a") for n in profiles}
+        refreshed_profiles: list[str] = []
     else:
         with console.status("[dim]Fetching usage...[/dim]"):
-            usage_map = asyncio.run(fetch_all_usage(all_data))
+            usage_summary = asyncio.run(fetch_all_usage(all_data))
+        usage_map = usage_summary.usage_map
+        refreshed_profiles = usage_summary.refreshed_profiles
 
     console.print(f"[dim]{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}[/dim]")
     terminal_width = getattr(ctx, "terminal_width", None) if ctx else None
@@ -122,6 +125,7 @@ def _show_profiles(no_interactive: bool, no_usage: bool) -> None:
         terminal_width = shutil.get_terminal_size(fallback=(console.width, 24)).columns
     console.print(render_table(profiles, all_data, usage_map, active, width=terminal_width))
     _maybe_offer_push_after_reconcile(reconcile_result, allow_prompt=not no_interactive)
+    _maybe_offer_push_after_refresh(refreshed_profiles, allow_prompt=not no_interactive)
 
     if not no_interactive:
         choice = interactive_prompt(profiles)
@@ -440,17 +444,49 @@ def _maybe_offer_push_after_reconcile(result, allow_prompt: bool) -> None:
     if not allow_prompt or not result or not result.store_updated_from_auth:
         return
 
+    _maybe_offer_push_for_local_updates(
+        header_lines=[
+            "##### An app updated local auth.json       #####",
+            "##### Updating local store now...          #####",
+            "##### Successfully reconciled local store. #####",
+        ],
+        prompt="Reconciliation updated local store. Push these changes now? [y/N]: ",
+    )
+
+
+def _maybe_offer_push_after_refresh(refreshed_profiles: list[str], allow_prompt: bool) -> None:
+    if not allow_prompt or not refreshed_profiles:
+        return
+
+    names = ", ".join(refreshed_profiles)
+    profile_label = "profile" if len(refreshed_profiles) == 1 else "profiles"
+    summary = f"Updated {profile_label}: {names}"
+    _maybe_offer_push_for_local_updates(
+        header_lines=[
+            "##### Refreshed stale stored tokens        #####",
+            _format_push_banner_line(summary),
+            "##### Local store now has newer tokens.   #####",
+        ],
+        prompt=f"Refreshed stored tokens for {profile_label} {names}. Push these changes now? [y/N]: ",
+    )
+
+
+def _format_push_banner_line(message: str) -> str:
+    return f"##### {message[:36].ljust(36)} #####"
+
+
+def _maybe_offer_push_for_local_updates(header_lines: list[str], prompt: str) -> None:
     sync_dir = get_sync_dir()
     if sync_dir is None:
         return
 
     banner = "#" * 48
     console.print(f"[bold red]{banner}[/bold red]")
-    console.print("[bold red]##### An app updated local auth.json       #####[/bold red]")
+    console.print(f"[bold red]{header_lines[0]}[/bold red]")
     console.print(f"[bold red]{banner}[/bold red]")
-    console.print(f"##### Updating local store now...          #####")
-    console.print(f"##### Successfully reconciled local store. #####")
-    if _confirm_yes_no("Reconciliation updated local store. Push these changes now? [y/N]: "):
+    for line in header_lines[1:]:
+        console.print(line)
+    if _confirm_yes_no(prompt):
         _push_sync_changes(sync_dir)
 
 
