@@ -479,6 +479,23 @@ def test_list_shows_profiles(runner, saved_profile, monkeypatch):
     assert "work" in result.output
 
 
+def test_list_places_table_immediately_after_timestamp(runner, saved_profile, monkeypatch):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 3, 13, 15, 4, 5, tzinfo=timezone.utc)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(cli_module, "datetime", FrozenDateTime)
+
+    result = runner.invoke(cli, ["list", "--no-usage", "--no-interactive"], terminal_width=140)
+
+    assert result.exit_code == 0
+    lines = result.output.splitlines()
+    timestamp_index = next(i for i, line in enumerate(lines) if "2026-03-13" in line)
+    assert lines[timestamp_index + 1].strip()
+
+
 def test_list_shows_usage_reset_columns(runner, saved_profile, monkeypatch):
     class FrozenDateTime(datetime):
         @classmethod

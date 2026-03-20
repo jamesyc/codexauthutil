@@ -176,6 +176,7 @@ def _render_full_table(
     table = Table(
         box=box.SIMPLE,
         show_header=True,
+        show_edge=False,
         header_style="bold",
         padding=(0, 1),
         pad_edge=False,
@@ -220,6 +221,7 @@ def _render_compact_table(
     table = Table(
         box=box.SIMPLE,
         show_header=True,
+        show_edge=False,
         header_style="bold",
         padding=(0, 0),
         pad_edge=False,
