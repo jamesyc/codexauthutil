@@ -173,9 +173,12 @@ def add_cmd(name, file_path):
     src = Path(file_path) if file_path else store.CODEX_AUTH
     if not src.exists():
         raise click.ClickException(f"{src} does not exist.")
-    data = json.loads(src.read_text())
-    if "auth_mode" not in data and "tokens" not in data:
-        raise click.ClickException("File doesn't look like a valid auth.json.")
+    try:
+        data = json.loads(src.read_text())
+    except json.JSONDecodeError as exc:
+        raise click.ClickException(f"Failed to parse {src}: {exc.msg}") from exc
+
+    _validate_auth_json(data)
     save_profile_from_file(name, src, preserve_mtime=True)
     console.print(f"[green]✓[/green] Saved profile [bold]{name}[/bold]")
 
@@ -353,6 +356,34 @@ def _activate(name: str):
     except ProfileNotFoundError as e:
         raise click.ClickException(str(e))
     console.print(f"[green]✓[/green] Activated profile [bold]{name}[/bold]")
+
+
+def _validate_auth_json(data: object) -> None:
+    if not isinstance(data, dict):
+        raise click.ClickException("File doesn't look like a valid auth.json.")
+
+    auth_mode = data.get("auth_mode")
+    if auth_mode not in {"chatgpt", "api_key"}:
+        raise click.ClickException(
+            "auth.json must contain a supported auth_mode of 'chatgpt' or 'api_key'."
+        )
+
+    if auth_mode == "chatgpt":
+        tokens = data.get("tokens")
+        if not isinstance(tokens, dict):
+            raise click.ClickException("chatgpt auth.json must contain a tokens object.")
+        access_token = tokens.get("access_token")
+        if not isinstance(access_token, str) or not access_token.strip():
+            raise click.ClickException(
+                "chatgpt auth.json must contain tokens.access_token."
+            )
+        return
+
+    api_key = data.get("OPENAI_API_KEY")
+    if not isinstance(api_key, str) or not api_key.strip():
+        raise click.ClickException(
+            "api_key auth.json must contain a non-empty OPENAI_API_KEY."
+        )
 
 
 def _require_sync_dir() -> Path:

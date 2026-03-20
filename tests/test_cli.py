@@ -67,6 +67,46 @@ def test_add_missing_file(runner):
     assert result.exit_code != 0
 
 
+def test_add_rejects_invalid_json(runner, tmp_path):
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text("{not json")
+
+    result = runner.invoke(cli, ["add", "work", "--file", str(auth_file)])
+
+    assert result.exit_code != 0
+    assert "Failed to parse" in result.output
+
+
+def test_add_rejects_missing_auth_mode(runner, tmp_path):
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text(json.dumps({"tokens": {"access_token": "abc"}}))
+
+    result = runner.invoke(cli, ["add", "work", "--file", str(auth_file)])
+
+    assert result.exit_code != 0
+    assert "supported auth_mode" in result.output
+
+
+def test_add_rejects_chatgpt_profile_without_access_token(runner, tmp_path):
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text(json.dumps({"auth_mode": "chatgpt", "tokens": {}}))
+
+    result = runner.invoke(cli, ["add", "work", "--file", str(auth_file)])
+
+    assert result.exit_code != 0
+    assert "tokens.access_token" in result.output
+
+
+def test_add_accepts_api_key_profile(runner, tmp_path):
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text(json.dumps({"auth_mode": "api_key", "OPENAI_API_KEY": "sk-test"}))
+
+    result = runner.invoke(cli, ["add", "work", "--file", str(auth_file)])
+
+    assert result.exit_code == 0
+    assert store_module.list_profiles() == ["work"]
+
+
 def test_add_default_preserves_source_mtime(runner, sample_profile):
     store_module.CODEX_AUTH.parent.mkdir(parents=True, exist_ok=True)
     store_module.CODEX_AUTH.write_text(json.dumps(sample_profile))
