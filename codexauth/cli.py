@@ -48,8 +48,8 @@ from codexauth.usage import UsageResult, fetch_all_usage
         "Sync setup:\n\n"
         "\b\n"
         "  Add CODEXAUTH_SYNC_DIR=/path/to/profiles to a repo-local .env file.\n"
-        "  `pull` runs git pull and then imports from that directory.\n"
-        "  `push` exports to that directory and then runs git add/commit/push.\n\n"
+        "  `pull` runs git pull --no-rebase --no-edit and then imports from that directory.\n"
+        "  `push` exports to that directory and then runs git add/commit/pull/push.\n\n"
         "Typical workflow order:\n\n"
         "\b\n"
         "  Pull shared changes and import them:\n"
@@ -301,7 +301,8 @@ def export_cmd():
     "pull",
     short_help="Pull the sync repo, then import profiles.",
     help=(
-        "Run `git pull` in CODEXAUTH_SYNC_DIR, then import all profiles from that directory into local storage.\n\n"
+        "Run `git pull --no-rebase --no-edit` in CODEXAUTH_SYNC_DIR, then import all profiles from that "
+        "directory into local storage.\n\n"
         "Overwrite cases still ask for confirmation during the import step."
     ),
 )
@@ -340,6 +341,7 @@ def pull_cmd():
         "  export local profiles into CODEXAUTH_SYNC_DIR\n"
         "  git add .\n"
         "  git commit -m \"Update exported codexauth profiles\"\n"
+        "  git pull --no-rebase --no-edit\n"
         "  git push\n\n"
         "If `git add .` leaves no staged changes, the command exits successfully without committing or pushing."
     ),
