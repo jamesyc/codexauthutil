@@ -987,7 +987,7 @@ def test_pull_success(runner, sample_profile, monkeypatch, tmp_path):
         calls.append((cmd, cwd))
         if cmd == ["git", "rev-parse", "--is-inside-work-tree"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="true\n", stderr="")
-        if cmd == ["git", "pull"]:
+        if cmd == ["git", "pull", "--no-rebase", "--no-edit"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="Already up to date.\n", stderr="")
         raise AssertionError(f"Unexpected command: {cmd}")
 
@@ -1002,7 +1002,7 @@ def test_pull_success(runner, sample_profile, monkeypatch, tmp_path):
     assert store_module.list_profiles() == ["work"]
     assert calls == [
         (["git", "rev-parse", "--is-inside-work-tree"], sync_dir),
-        (["git", "pull"], sync_dir),
+        (["git", "pull", "--no-rebase", "--no-edit"], sync_dir),
     ]
 
 
@@ -1032,7 +1032,7 @@ def test_pull_reconciles_active_profile_before_git_pull(runner, monkeypatch, tmp
     def fake_run(cmd, cwd, capture_output, text, check):
         if cmd == ["git", "rev-parse", "--is-inside-work-tree"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="true\n", stderr="")
-        if cmd == ["git", "pull"]:
+        if cmd == ["git", "pull", "--no-rebase", "--no-edit"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="Already up to date.\n", stderr="")
         raise AssertionError(f"Unexpected command: {cmd}")
 
@@ -1077,7 +1077,7 @@ def test_pull_updates_local_auth_from_newer_imported_active_profile(runner, monk
     def fake_run(cmd, cwd, capture_output, text, check):
         if cmd == ["git", "rev-parse", "--is-inside-work-tree"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="true\n", stderr="")
-        if cmd == ["git", "pull"]:
+        if cmd == ["git", "pull", "--no-rebase", "--no-edit"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="Fetched.\n", stderr="")
         raise AssertionError(f"Unexpected command: {cmd}")
 
@@ -1099,7 +1099,7 @@ def test_pull_failure_surfaces_git_error(runner, monkeypatch, tmp_path):
     def fake_run(cmd, cwd, capture_output, text, check):
         if cmd == ["git", "rev-parse", "--is-inside-work-tree"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="true\n", stderr="")
-        if cmd == ["git", "pull"]:
+        if cmd == ["git", "pull", "--no-rebase", "--no-edit"]:
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="merge conflict\n")
         raise AssertionError(f"Unexpected command: {cmd}")
 
@@ -1108,7 +1108,7 @@ def test_pull_failure_surfaces_git_error(runner, monkeypatch, tmp_path):
     result = runner.invoke(cli, ["pull"])
 
     assert result.exit_code != 0
-    assert "git pull failed" in result.output
+    assert "git pull --no-rebase --no-edit failed" in result.output
     assert "merge conflict" in result.output
 
 
@@ -1190,6 +1190,8 @@ def test_push_success(runner, monkeypatch, tmp_path):
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
         if cmd == ["git", "commit", "-m", "Update exported codexauth profiles"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="[main abc123] Update exported codexauth profiles\n", stderr="")
+        if cmd == ["git", "pull", "--no-rebase", "--no-edit"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="Already up to date.\n", stderr="")
         if cmd == ["git", "push"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="pushed\n", stderr="")
         raise AssertionError(f"Unexpected command: {cmd}")
@@ -1208,6 +1210,7 @@ def test_push_success(runner, monkeypatch, tmp_path):
         (["git", "add", "."], sync_dir),
         (["git", "diff", "--cached", "--quiet"], sync_dir),
         (["git", "commit", "-m", "Update exported codexauth profiles"], sync_dir),
+        (["git", "pull", "--no-rebase", "--no-edit"], sync_dir),
         (["git", "push"], sync_dir),
     ]
 
@@ -1288,6 +1291,8 @@ def test_push_failure_surfaces_git_error(runner, monkeypatch, tmp_path):
                 stdout="[main abc123] Update exported codexauth profiles\n",
                 stderr="",
             )
+        if cmd == ["git", "pull", "--no-rebase", "--no-edit"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="Merge made by the 'ort' strategy.\n", stderr="")
         if cmd == ["git", "push"]:
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="non-fast-forward\n")
         raise AssertionError(f"Unexpected command: {cmd}")
@@ -1300,4 +1305,54 @@ def test_push_failure_surfaces_git_error(runner, monkeypatch, tmp_path):
     assert "Exported profile work" in result.output
     assert "git push failed" in result.output
     assert "non-fast-forward" in result.output
+    assert (["git", "pull", "--no-rebase", "--no-edit"], sync_dir) in calls
     assert (["git", "push"], sync_dir) in calls
+
+
+def test_push_pull_failure_surfaces_git_error(runner, monkeypatch, tmp_path):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+    store_module.save_profile("work", {
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": None,
+        "tokens": {
+            "id_token": "fake.id.token",
+            "access_token": "fake-access-token",
+            "refresh_token": "fake-refresh-token",
+            "account_id": "fake-account-id",
+        },
+        "last_refresh": "2025-01-01T00:00:00+00:00",
+    })
+
+    calls = []
+
+    def fake_run(cmd, cwd, capture_output, text, check):
+        calls.append((cmd, cwd))
+        if cmd == ["git", "rev-parse", "--is-inside-work-tree"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="true\n", stderr="")
+        if cmd == ["git", "add", "."]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd == ["git", "diff", "--cached", "--quiet"]:
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+        if cmd == ["git", "commit", "-m", "Update exported codexauth profiles"]:
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout="[main abc123] Update exported codexauth profiles\n",
+                stderr="",
+            )
+        if cmd == ["git", "pull", "--no-rebase", "--no-edit"]:
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="merge conflict\n")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    monkeypatch.setattr(git_sync_module.subprocess, "run", fake_run)
+
+    result = runner.invoke(cli, ["push"])
+
+    assert result.exit_code != 0
+    assert "Exported profile work" in result.output
+    assert "git pull --no-rebase --no-edit failed" in result.output
+    assert "merge conflict" in result.output
+    assert (["git", "push"], sync_dir) not in calls

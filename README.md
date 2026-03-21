@@ -136,7 +136,7 @@ If the configured sync directory is a Git repo, fetch remote changes and then im
 ./codexauth.py pull
 ```
 
-`pull` reads `CODEXAUTH_SYNC_DIR` from `.env`, runs `git pull`, and then imports all `*.json` profiles from that directory. If a profile would overwrite an existing local copy, it shows both modified timestamps before prompting.
+`pull` reads `CODEXAUTH_SYNC_DIR` from `.env`, runs `git pull --no-rebase --no-edit`, and then imports all `*.json` profiles from that directory. If a profile would overwrite an existing local copy, it shows both modified timestamps before prompting.
 
 ## Publish local changes
 
@@ -154,6 +154,7 @@ It runs the equivalent of:
 export local profiles into CODEXAUTH_SYNC_DIR
 git add .
 git commit -m "Update exported codexauth profiles"
+git pull --no-rebase --no-edit
 git push
 ```
 

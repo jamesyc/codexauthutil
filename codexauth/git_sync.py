@@ -43,7 +43,7 @@ def ensure_git_repo(sync_dir: Path) -> None:
 
 def pull_sync_repo(sync_dir: Path) -> str:
     ensure_git_repo(sync_dir)
-    result = _run_git(sync_dir, "pull")
+    result = _run_git(sync_dir, "pull", "--no-rebase", "--no-edit")
     return (result.stdout or result.stderr).strip() or "Already up to date."
 
 
@@ -67,5 +67,6 @@ def push_sync_repo(sync_dir: Path, message: str = "Update exported codexauth pro
         )
 
     _run_git(sync_dir, "commit", "-m", message)
+    _run_git(sync_dir, "pull", "--no-rebase", "--no-edit")
     result = _run_git(sync_dir, "push")
     return (result.stdout or result.stderr).strip() or "Pushed changes."
