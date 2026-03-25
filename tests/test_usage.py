@@ -11,6 +11,7 @@ import httpx
 import codexauth.usage as usage_module
 import codexauth.store as store_module
 from codexauth.usage import fetch_usage, fetch_all_usage, UsageFetchSummary, UsageResult, USAGE_URL
+from codexauth.usage import _parse_usage_windows, _parse_additional_rate_limits
 
 FRESH_PROFILE = {
     "auth_mode": "chatgpt",
@@ -79,6 +80,173 @@ async def test_fetch_usage_parses_spark_window():
     assert result.windows["additional_gpt_5_3_codex_spark_secondary_window"].label == "GPT-5.3-Codex-Spark Weekly"
     assert result.windows["additional_gpt_5_3_codex_spark_secondary_window"].used_pct == 9
     assert refreshed is False
+
+
+def test_parse_usage_windows_uses_duration_to_classify_standard_windows():
+    result = _parse_usage_windows(
+        {
+            "primary_window": {"used_percent": 11, "reset_at": 9999999000, "limit_window_seconds": 18000},
+            "secondary_window": {"used_percent": 22, "reset_at": 9999998000, "limit_window_seconds": 604800},
+        }
+    )
+
+    assert set(result) == {"primary_window", "secondary_window"}
+    assert result["primary_window"].used_pct == 11
+    assert result["primary_window"].limit_window_seconds == 18000
+    assert result["secondary_window"].used_pct == 22
+    assert result["secondary_window"].limit_window_seconds == 604800
+
+
+def test_parse_usage_windows_moves_weekly_primary_window_into_weekly_bucket():
+    result = _parse_usage_windows(
+        {
+            "primary_window": {"used_percent": 100, "reset_at": 1774679953, "limit_window_seconds": 604800},
+            "secondary_window": None,
+        }
+    )
+
+    assert "primary_window" not in result
+    assert result["secondary_window"].used_pct == 100
+    assert result["secondary_window"].limit_window_seconds == 604800
+
+
+def test_parse_usage_windows_keeps_legacy_primary_secondary_mapping_without_duration():
+    result = _parse_usage_windows(
+        {
+            "primary_window": {"used_percent": 33, "reset_at": 9999999000},
+            "secondary_window": {"used_percent": 44, "reset_at": 9999998000},
+        }
+    )
+
+    assert set(result) == {"primary_window", "secondary_window"}
+    assert result["primary_window"].used_pct == 33
+    assert result["secondary_window"].used_pct == 44
+
+
+def test_parse_usage_windows_preserves_unknown_duration_as_extra_column():
+    result = _parse_usage_windows(
+        {
+            "primary_window": {"used_percent": 55, "reset_at": 9999999000, "limit_window_seconds": 86400},
+            "secondary_window": None,
+        }
+    )
+
+    assert "primary_window" not in result
+    assert result["extra_primary_window"].used_pct == 55
+    assert result["extra_primary_window"].limit_window_seconds == 86400
+
+
+def test_parse_usage_windows_preserves_duplicate_recognized_duration_as_extra_column():
+    result = _parse_usage_windows(
+        {
+            "primary_window": {"used_percent": 10, "reset_at": 9999999000, "limit_window_seconds": 18000},
+            "secondary_window": {"used_percent": 20, "reset_at": 9999998000, "limit_window_seconds": 18000},
+        }
+    )
+
+    assert result["primary_window"].used_pct == 10
+    assert result["extra_secondary_window"].used_pct == 20
+
+
+def test_parse_usage_windows_ignores_invalid_shapes_and_values():
+    result = _parse_usage_windows(
+        {
+            "primary_window": {"used_percent": 66, "reset_at": 9999999000, "limit_window_seconds": "invalid"},
+            "secondary_window": "not-a-dict",
+            "tertiary_window": {"used_percent": 77, "reset_at": 9999998000, "limit_window_seconds": 0},
+        }
+    )
+
+    assert result["primary_window"].limit_window_seconds is None
+    assert result["tertiary_window"].limit_window_seconds is None
+    assert "secondary_window" not in result
+
+
+def test_parse_additional_rate_limits_uses_duration_to_classify_named_windows():
+    result = _parse_additional_rate_limits(
+        [
+            {
+                "limit_name": "GPT-5.3-Codex-Spark",
+                "rate_limit": {
+                    "primary_window": {"used_percent": 12, "reset_at": 9999999000, "limit_window_seconds": 18000},
+                    "secondary_window": {"used_percent": 9, "reset_at": 9999998000, "limit_window_seconds": 604800},
+                },
+            }
+        ]
+    )
+
+    assert result["additional_gpt_5_3_codex_spark_primary_window"].label == "GPT-5.3-Codex-Spark"
+    assert result["additional_gpt_5_3_codex_spark_secondary_window"].label == "GPT-5.3-Codex-Spark Weekly"
+
+
+def test_parse_additional_rate_limits_moves_weekly_primary_window_into_named_weekly_bucket():
+    result = _parse_additional_rate_limits(
+        [
+            {
+                "limit_name": "GPT-5.3-Codex-Spark",
+                "rate_limit": {
+                    "primary_window": {"used_percent": 9, "reset_at": 9999998000, "limit_window_seconds": 604800},
+                    "secondary_window": None,
+                },
+            }
+        ]
+    )
+
+    assert "additional_gpt_5_3_codex_spark_primary_window" not in result
+    assert result["additional_gpt_5_3_codex_spark_secondary_window"].label == "GPT-5.3-Codex-Spark Weekly"
+    assert result["additional_gpt_5_3_codex_spark_secondary_window"].used_pct == 9
+
+
+def test_parse_additional_rate_limits_keeps_legacy_named_mapping_without_duration():
+    result = _parse_additional_rate_limits(
+        [
+            {
+                "limit_name": "GPT-5.3-Codex-Spark",
+                "rate_limit": {
+                    "primary_window": {"used_percent": 12, "reset_at": 9999999000},
+                    "secondary_window": {"used_percent": 9, "reset_at": 9999998000},
+                },
+            }
+        ]
+    )
+
+    assert "additional_gpt_5_3_codex_spark_primary_window" in result
+    assert "additional_gpt_5_3_codex_spark_secondary_window" in result
+
+
+def test_parse_additional_rate_limits_preserves_unknown_duration_as_extra_column():
+    result = _parse_additional_rate_limits(
+        [
+            {
+                "limit_name": "GPT-5.3-Codex-Spark",
+                "rate_limit": {
+                    "primary_window": {"used_percent": 12, "reset_at": 9999999000, "limit_window_seconds": 86400},
+                },
+            }
+        ]
+    )
+
+    assert "additional_gpt_5_3_codex_spark_primary_window" not in result
+    assert result["additional_gpt_5_3_codex_spark_extra_primary_window"].used_pct == 12
+
+
+def test_parse_additional_rate_limits_ignores_invalid_items():
+    result = _parse_additional_rate_limits(
+        [
+            None,
+            {"limit_name": "", "rate_limit": {}},
+            {"limit_name": "Spark"},
+            {"limit_name": "Spark", "rate_limit": "not-a-dict"},
+            {
+                "limit_name": "Spark",
+                "rate_limit": {
+                    "primary_window": {"used_percent": 1, "reset_at": 9999999000},
+                },
+            },
+        ]
+    )
+
+    assert set(result) == {"additional_spark_primary_window"}
 
 
 @pytest.mark.asyncio

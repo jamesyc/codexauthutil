@@ -10,6 +10,8 @@ from codexauth.refresh import needs_refresh, refresh_tokens
 from codexauth.store import save_profile
 
 USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
+SHORT_WINDOW_SECONDS = 5 * 60 * 60
+WEEKLY_WINDOW_SECONDS = 7 * 24 * 60 * 60
 
 
 @dataclass
@@ -19,6 +21,7 @@ class UsageWindow:
     reset_at: datetime | None = None
     label: str | None = None
     short_label: str | None = None
+    limit_window_seconds: int | None = None
 
 
 class UsageResult:
@@ -83,17 +86,90 @@ def _parse_reset_at(value):
         return None
 
 
-def _parse_usage_windows(rate_limit: dict) -> dict[str, UsageWindow]:
+def _parse_limit_window_seconds(value):
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _canonical_window_key(limit_window_seconds: int | None) -> str | None:
+    if limit_window_seconds == SHORT_WINDOW_SECONDS:
+        return "primary_window"
+    if limit_window_seconds == WEEKLY_WINDOW_SECONDS:
+        return "secondary_window"
+    return None
+
+
+def _copy_window(window: UsageWindow, key: str) -> UsageWindow:
+    return UsageWindow(
+        key=key,
+        used_pct=window.used_pct,
+        reset_at=window.reset_at,
+        label=window.label,
+        short_label=window.short_label,
+        limit_window_seconds=window.limit_window_seconds,
+    )
+
+
+def _extra_window_key(base_key: str, windows: dict[str, UsageWindow]) -> str:
+    candidate = f"extra_{base_key}"
+    if candidate not in windows:
+        return candidate
+
+    index = 2
+    while f"{candidate}_{index}" in windows:
+        index += 1
+    return f"{candidate}_{index}"
+
+
+def _normalize_standard_windows(raw_windows: dict[str, UsageWindow]) -> dict[str, UsageWindow]:
     windows: dict[str, UsageWindow] = {}
+
+    for fallback_key in ("primary_window", "secondary_window"):
+        window = raw_windows.get(fallback_key)
+        if window is None:
+            continue
+
+        canonical_key = _canonical_window_key(window.limit_window_seconds)
+        if canonical_key is not None:
+            target_key = canonical_key
+        elif window.limit_window_seconds is None:
+            target_key = fallback_key
+        else:
+            target_key = _extra_window_key(window.key, windows)
+
+        if target_key not in windows:
+            windows[target_key] = _copy_window(window, target_key)
+            continue
+
+        extra_key = _extra_window_key(window.key, windows)
+        windows[extra_key] = _copy_window(window, extra_key)
+
+    for raw_key, window in raw_windows.items():
+        if raw_key in ("primary_window", "secondary_window"):
+            continue
+        target_key = raw_key if raw_key not in windows else _extra_window_key(raw_key, windows)
+        windows[target_key] = _copy_window(window, target_key)
+
+    return windows
+
+
+def _parse_usage_windows(rate_limit: dict) -> dict[str, UsageWindow]:
+    raw_windows: dict[str, UsageWindow] = {}
     for key, value in rate_limit.items():
         if not key.endswith("_window") or not isinstance(value, dict):
             continue
-        windows[key] = UsageWindow(
+        raw_windows[key] = UsageWindow(
             key=key,
             used_pct=value.get("used_percent"),
             reset_at=_parse_reset_at(value.get("reset_at")),
+            limit_window_seconds=_parse_limit_window_seconds(value.get("limit_window_seconds")),
         )
-    return windows
+    return _normalize_standard_windows(raw_windows)
 
 
 def _slugify_label(value: str) -> str:
@@ -121,18 +197,31 @@ def _parse_additional_rate_limits(items) -> dict[str, UsageWindow]:
         label_base = str(limit_name)
         short_label = label_base[:3]
         prefix = _slugify_label(label_base)
+        raw_windows: dict[str, UsageWindow] = {}
         for key, value in rate_limit.items():
             if not key.endswith("_window") or not isinstance(value, dict):
                 continue
-            window_label = label_base if key == "primary_window" else f"{label_base} Weekly"
-            window_short_label = short_label if key == "primary_window" else f"{short_label} W"
-            window_key = f"additional_{prefix}_{key}"
-            windows[window_key] = UsageWindow(
-                key=window_key,
+            raw_windows[key] = UsageWindow(
+                key=key,
                 used_pct=value.get("used_percent"),
                 reset_at=_parse_reset_at(value.get("reset_at")),
+                label=label_base if key == "primary_window" else f"{label_base} Weekly",
+                short_label=short_label if key == "primary_window" else f"{short_label} W",
+                limit_window_seconds=_parse_limit_window_seconds(value.get("limit_window_seconds")),
+            )
+
+        for normalized_key, window in _normalize_standard_windows(raw_windows).items():
+            semantic_key = normalized_key.removeprefix("extra_")
+            window_label = label_base if semantic_key == "primary_window" else f"{label_base} Weekly"
+            window_short_label = short_label if semantic_key == "primary_window" else f"{short_label} W"
+            window_key = f"additional_{prefix}_{normalized_key}"
+            windows[window_key] = UsageWindow(
+                key=window_key,
+                used_pct=window.used_pct,
+                reset_at=window.reset_at,
                 label=window_label,
                 short_label=window_short_label,
+                limit_window_seconds=window.limit_window_seconds,
             )
     return windows
 

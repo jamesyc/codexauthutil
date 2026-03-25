@@ -175,3 +175,42 @@ def test_render_table_shows_spark_window_when_present(monkeypatch):
     assert "Spark Weekly" in output
     assert "12%" in output
     assert "1h 30m" in output
+
+
+def test_render_table_shows_weekly_only_usage_in_weekly_columns(monkeypatch):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 3, 24, 23, 43, 6, tzinfo=timezone.utc)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(display_module, "datetime", FrozenDateTime)
+
+    table = render_table(
+        profiles=["redstarlynx"],
+        profile_data={"redstarlynx": {"auth_mode": "chatgpt"}},
+        usage_map={
+            "redstarlynx": UsageResult(
+                windows={
+                    "secondary_window": UsageWindow(
+                        key="secondary_window",
+                        used_pct=100,
+                        reset_at=datetime(2026, 3, 28, 5, 36, 33, tzinfo=timezone.utc),
+                        limit_window_seconds=604800,
+                    )
+                }
+            )
+        },
+        active=None,
+        width=160,
+    )
+
+    console = Console(record=True, width=160)
+    console.print(table)
+    output = console.export_text()
+
+    assert "5h Used" in output
+    assert "Weekly" in output
+    assert "N/A" in output
+    assert "100%" in output
+    assert "3d 5h" in output

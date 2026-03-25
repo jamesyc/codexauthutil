@@ -162,7 +162,7 @@ If there is nothing staged after `git add .`, `push` exits successfully without 
 
 # How usage data works
 
-Quota is fetched from `https://chatgpt.com/backend-api/wham/usage` using the `access_token` stored in each profile's `auth.json`. The list view always shows the standard 5-hour and weekly windows from the top-level `rate_limit` object. If the API also returns named limits under `additional_rate_limits`, the CLI renders those as extra columns. The current UI shortens `GPT-5.3-Codex-Spark` to `Spark` so the table stays readable on narrow terminals:
+Quota is fetched from `https://chatgpt.com/backend-api/wham/usage` using the `access_token` stored in each profile's `auth.json`. The list view still shows standard 5-hour and weekly columns, but when the API provides `limit_window_seconds` the CLI classifies each window by duration instead of assuming `primary_window=5h` and `secondary_window=weekly`. If the API omits `limit_window_seconds`, the parser falls back to the legacy positional mapping for backwards compatibility. If the API also returns named limits under `additional_rate_limits`, the CLI renders those as extra columns using the same duration-aware logic. The current UI shortens `GPT-5.3-Codex-Spark` to `Spark` so the table stays readable on narrow terminals:
 
 | Column | Window | Description |
 |--------|--------|-------------|
@@ -176,6 +176,7 @@ Quota is fetched from `https://chatgpt.com/backend-api/wham/usage` using the `ac
 | **Spark Weekly Left** | API-defined | Time remaining until that named limit's weekly window resets |
 
 - Tokens are automatically refreshed if they are older than 8 days
+- Unknown or duplicate API windows are preserved as extra columns rather than silently relabeled or dropped
 - `api_key` mode profiles show `N/A` (no quota limits apply)
 - Expired or revoked tokens show `expired` in red
 - Reset countdowns render compact durations such as `53m`, `4h 12m`, or `2d 3h`
