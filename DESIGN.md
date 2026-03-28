@@ -389,6 +389,20 @@ Usage lookup is only attempted for ChatGPT-backed profiles. For each eligible pr
 
 The CLI fetches usage concurrently for all profiles with `asyncio.gather`, which keeps the list command responsive even when several profiles are stored.
 
+To keep network overhead predictable as the number of stored profiles grows,
+the implementation should bound usage-fetch concurrency with a semaphore rather
+than launching an unbounded number of requests. A small default such as 8
+concurrent profiles is a reasonable baseline.
+
+The usage layer should also reuse shared async HTTP clients across the full
+batch:
+
+- one client for usage GET requests
+- one client for refresh POST requests
+
+This avoids opening a fresh connection pool per profile while still allowing
+different timeout policies for usage and refresh calls.
+
 Usage retrieval should also report which stored profiles were actually updated
 by a successful refresh. `list` uses that metadata to decide whether it should
 offer a follow-up `push` for refreshed stored tokens when sync is configured
@@ -715,6 +729,11 @@ On a successful refresh:
 
 On any failure, the original profile is preserved. This favors resilience over strict error propagation.
 
+The refresh helper should also accept an optional caller-supplied async HTTP
+client. That keeps standalone refresh behavior simple while letting batch usage
+fetches reuse a shared client and letting tests inject a lightweight fake
+client without patching network internals more broadly.
+
 ## Terminal UX
 
 The user interface is optimized for quick local use:
@@ -774,6 +793,8 @@ The existing test suite covers the main functional layers:
 - modified-time updates for token refresh saves
 - token refresh decision logic
 - usage fetch success and failure cases
+- usage batch concurrency limits and shared-client reuse
+- refresh helper behavior with injected HTTP clients
 
 Tests use:
 

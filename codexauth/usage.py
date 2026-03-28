@@ -10,6 +10,7 @@ from codexauth.refresh import needs_refresh, refresh_tokens
 from codexauth.store import save_profile
 
 USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
+DEFAULT_USAGE_CONCURRENCY = 8
 SHORT_WINDOW_SECONDS = 5 * 60 * 60
 WEEKLY_WINDOW_SECONDS = 7 * 24 * 60 * 60
 
@@ -226,7 +227,13 @@ def _parse_additional_rate_limits(items) -> dict[str, UsageWindow]:
     return windows
 
 
-async def fetch_usage(name: str, profile: dict) -> tuple[str, UsageResult, bool]:
+async def fetch_usage(
+    name: str,
+    profile: dict,
+    *,
+    usage_client: httpx.AsyncClient | None = None,
+    refresh_client: httpx.AsyncClient | None = None,
+) -> tuple[str, UsageResult, bool]:
     """Fetch usage for a single profile. Returns (name, UsageResult, refreshed)."""
     if profile.get("auth_mode") != "chatgpt":
         return name, UsageResult(error="n/a"), False
@@ -241,7 +248,7 @@ async def fetch_usage(name: str, profile: dict) -> tuple[str, UsageResult, bool]
     refreshed = False
     if needs_refresh(profile):
         previous_profile = profile
-        profile = await refresh_tokens(profile)
+        profile = await refresh_tokens(profile, client=refresh_client)
         if profile != previous_profile:
             save_profile(name, profile)
             refreshed = True
@@ -255,8 +262,11 @@ async def fetch_usage(name: str, profile: dict) -> tuple[str, UsageResult, bool]
         headers["ChatGPT-Account-Id"] = account_id
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(USAGE_URL, headers=headers)
+        if usage_client is None:
+            async with httpx.AsyncClient(timeout=15) as owned_client:
+                resp = await owned_client.get(USAGE_URL, headers=headers)
+        else:
+            resp = await usage_client.get(USAGE_URL, headers=headers)
         if resp.status_code in (401, 403):
             return name, UsageResult(error="expired"), refreshed
         if resp.status_code != 200:
@@ -274,9 +284,51 @@ async def fetch_usage(name: str, profile: dict) -> tuple[str, UsageResult, bool]
         return name, UsageResult(error="n/a"), refreshed
 
 
-async def fetch_all_usage(profiles: dict[str, dict]) -> UsageFetchSummary:
+async def _fetch_usage_with_limit(
+    semaphore: asyncio.Semaphore,
+    name: str,
+    profile: dict,
+    *,
+    usage_client: httpx.AsyncClient,
+    refresh_client: httpx.AsyncClient,
+) -> tuple[str, UsageResult, bool]:
+    async with semaphore:
+        return await fetch_usage(
+            name,
+            profile,
+            usage_client=usage_client,
+            refresh_client=refresh_client,
+        )
+
+
+async def fetch_all_usage(
+    profiles: dict[str, dict],
+    *,
+    max_concurrency: int = DEFAULT_USAGE_CONCURRENCY,
+) -> UsageFetchSummary:
     """Fetch usage for all profiles concurrently."""
-    results = await asyncio.gather(*[fetch_usage(n, d) for n, d in profiles.items()])
+    if not profiles:
+        return UsageFetchSummary(usage_map={}, refreshed_profiles=[])
+
+    concurrency = max(1, min(max_concurrency, len(profiles)))
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async with (
+        httpx.AsyncClient(timeout=15) as usage_client,
+        httpx.AsyncClient(timeout=30) as refresh_client,
+    ):
+        results = await asyncio.gather(
+            *[
+                _fetch_usage_with_limit(
+                    semaphore,
+                    name,
+                    profile,
+                    usage_client=usage_client,
+                    refresh_client=refresh_client,
+                )
+                for name, profile in profiles.items()
+            ]
+        )
     return UsageFetchSummary(
         usage_map={name: usage for name, usage, _ in results},
         refreshed_profiles=[name for name, _, refreshed in results if refreshed],

@@ -1,5 +1,6 @@
 """Tests for codexauth.usage."""
 
+import asyncio
 import json
 import os
 from datetime import datetime, timezone
@@ -326,7 +327,7 @@ async def test_fetch_usage_refresh_updates_stored_mtime(monkeypatch, sample_prof
     stale_profile["tokens"] = dict(sample_profile["tokens"])
     stale_profile["last_refresh"] = "2000-01-01T00:00:00+00:00"
 
-    async def fake_refresh(profile):
+    async def fake_refresh(profile, client=None):
         refreshed = dict(profile)
         refreshed["tokens"] = dict(profile["tokens"])
         refreshed["tokens"]["access_token"] = "new-access-token"
@@ -361,3 +362,55 @@ async def test_fetch_usage_refresh_updates_stored_mtime(monkeypatch, sample_prof
     assert stored_path.stat().st_mtime > 1_600_000_000
     saved = json.loads(stored_path.read_text())
     assert saved["tokens"]["access_token"] == "new-access-token"
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_usage_reuses_clients_and_limits_concurrency(monkeypatch):
+    profiles = {f"profile-{i}": FRESH_PROFILE for i in range(5)}
+    client_instances = []
+    usage_client_ids = set()
+    refresh_client_ids = set()
+    active = 0
+    max_active = 0
+
+    class DummyClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            client_instances.append(self)
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    async def fake_fetch_usage(name, profile, *, usage_client=None, refresh_client=None):
+        nonlocal active, max_active
+        usage_client_ids.add(id(usage_client))
+        refresh_client_ids.add(id(refresh_client))
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return name, UsageResult(primary_pct=45), False
+
+    monkeypatch.setattr(usage_module.httpx, "AsyncClient", DummyClient)
+    monkeypatch.setattr(usage_module, "fetch_usage", fake_fetch_usage)
+
+    results = await fetch_all_usage(profiles, max_concurrency=2)
+
+    assert isinstance(results, UsageFetchSummary)
+    assert set(results.usage_map) == set(profiles)
+    assert len(client_instances) == 2
+    assert {client.timeout for client in client_instances} == {15, 30}
+    assert len(usage_client_ids) == 1
+    assert len(refresh_client_ids) == 1
+    assert max_active == 2
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_usage_empty_profiles():
+    results = await fetch_all_usage({})
+
+    assert results.usage_map == {}
+    assert results.refreshed_profiles == []

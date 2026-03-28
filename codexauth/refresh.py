@@ -20,20 +20,34 @@ def needs_refresh(profile: dict) -> bool:
         return True
 
 
-async def refresh_tokens(profile: dict) -> dict:
+async def refresh_tokens(profile: dict, client: httpx.AsyncClient | None = None) -> dict:
     """Return an updated profile dict with refreshed tokens, or the original on failure."""
     tokens = profile.get("tokens", {})
     refresh_token = tokens.get("refresh_token", "")
     if not refresh_token:
         return profile
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(REFRESH_URL, json={
-                "client_id": REFRESH_CLIENT_ID,
-                "grant_type": "refresh_token",
-                "refresh_token": refresh_token,
-                "scope": "openid profile email",
-            })
+        if client is None:
+            async with httpx.AsyncClient(timeout=30) as owned_client:
+                resp = await owned_client.post(
+                    REFRESH_URL,
+                    json={
+                        "client_id": REFRESH_CLIENT_ID,
+                        "grant_type": "refresh_token",
+                        "refresh_token": refresh_token,
+                        "scope": "openid profile email",
+                    },
+                )
+        else:
+            resp = await client.post(
+                REFRESH_URL,
+                json={
+                    "client_id": REFRESH_CLIENT_ID,
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                    "scope": "openid profile email",
+                },
+            )
         if resp.status_code != 200:
             return profile
         data = resp.json()

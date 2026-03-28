@@ -86,3 +86,26 @@ async def test_refresh_tokens_no_refresh_token():
     profile = {"auth_mode": "chatgpt", "tokens": {}}
     result = await refresh_tokens(profile)
     assert result == profile
+
+
+@pytest.mark.asyncio
+async def test_refresh_tokens_uses_provided_client():
+    calls = []
+
+    class DummyClient:
+        async def post(self, url, json):
+            calls.append((url, json))
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "new-access",
+                    "refresh_token": "new-refresh",
+                },
+            )
+
+    profile = _profile_with_refresh(days_ago=10)
+    result = await refresh_tokens(profile, client=DummyClient())
+
+    assert result["tokens"]["access_token"] == "new-access"
+    assert calls[0][0] == REFRESH_URL
+    assert calls[0][1]["refresh_token"] == "old-refresh"
