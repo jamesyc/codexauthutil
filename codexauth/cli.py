@@ -31,6 +31,7 @@ from codexauth.sync import (
     export_profile,
     format_modified,
     import_profile,
+    list_blacklisted_profiles,
 )
 from codexauth.usage import UsageResult, fetch_all_usage
 
@@ -398,8 +399,13 @@ def _require_sync_dir() -> Path:
 
 
 def _run_import(sync_dir: Path) -> set[str]:
-    candidates = build_import_candidates(sync_dir)
-    if not candidates:
+    blacklisted_names = set(list_blacklisted_profiles(sync_dir))
+    candidates = [
+        candidate
+        for candidate in build_import_candidates(sync_dir)
+        if candidate.name not in blacklisted_names
+    ]
+    if not candidates and not blacklisted_names:
         console.print(f"[dim]No profiles found in [bold]{sync_dir}[/bold].[/dim]")
         return set()
 
@@ -415,7 +421,20 @@ def _run_import(sync_dir: Path) -> set[str]:
         imported_names.add(candidate.name)
         console.print(f"[green]✓[/green] Imported profile [bold]{candidate.name}[/bold]")
 
-    if imported == 0:
+    removed = 0
+    for name in sorted(blacklisted_names):
+        try:
+            delete_profile(name)
+        except ProfileNotFoundError:
+            continue
+        if get_active() == name:
+            store.ACTIVE_FILE.unlink(missing_ok=True)
+        removed += 1
+        console.print(
+            f"[green]✓[/green] Removed blacklisted profile [bold]{name}[/bold]"
+        )
+
+    if imported == 0 and removed == 0:
         console.print("[dim]No profiles imported.[/dim]")
     return imported_names
 

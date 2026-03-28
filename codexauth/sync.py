@@ -36,6 +36,28 @@ def list_sync_profiles(sync_dir: Path) -> list[str]:
     return sorted(path.stem for path in sync_dir.glob("*.json"))
 
 
+def list_blacklisted_profiles(sync_dir: Path) -> list[str]:
+    gitignore_path = sync_dir / ".gitignore"
+    if not gitignore_path.exists():
+        return []
+
+    blacklisted: set[str] = set()
+    for raw_line in gitignore_path.read_text().splitlines():
+        entry = raw_line.strip()
+        if not entry or entry.startswith("#") or entry.startswith("!"):
+            continue
+
+        if entry.startswith("/"):
+            entry = entry[1:]
+
+        if "/" in entry or not entry.endswith(".json"):
+            continue
+
+        blacklisted.add(Path(entry).stem)
+
+    return sorted(blacklisted)
+
+
 def build_import_candidates(sync_dir: Path) -> list[SyncCandidate]:
     candidates: list[SyncCandidate] = []
     for name in list_sync_profiles(sync_dir):

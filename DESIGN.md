@@ -93,6 +93,11 @@ Within that external directory, profile files are expected to be stored as:
 
 - `<CODEXAUTH_SYNC_DIR>/<name>.json`
 
+If a profile JSON path is listed in the sync repository's `.gitignore`, that
+entry should be treated as an explicit blacklist or ban for that profile. In
+other words, an ignored `*.json` file is not just omitted from sync; it means
+the matching local stored profile should be considered disallowed.
+
 ## Command Design
 
 ### `codexauth list`
@@ -413,6 +418,9 @@ This keeps configuration simple and avoids adding another persistent config syst
 5. For profiles that already exist locally, show local and external modified times and ask whether to overwrite.
 6. Copy accepted profiles into `~/.codexauth/tokens`.
 7. Preserve the source file's modified timestamp on the imported local copy.
+8. If the sync directory's `.gitignore` blacklists a profile JSON file, treat
+   that as a removal instruction and run the equivalent of `codexauth remove
+   <name>` against the local store for that profile.
 
 Key UX requirement:
 
@@ -453,12 +461,15 @@ The pull command should behave as follows:
    external refreshes are captured in store before sync begins.
 6. Run `git pull`.
 7. Import all profiles from the sync directory.
-8. For any imported profile that is currently active locally, reconcile the
+8. Parse the sync repository's `.gitignore` for blacklisted `*.json` profile
+   paths. For each matching local stored profile, run the equivalent of
+   `codexauth remove <name>` so the local store mirrors the ban after pull.
+9. For any imported profile that is currently active locally, reconcile the
    imported stored copy against `~/.codex/auth.json` before deciding whether one
    copy should replace the other.
-9. Prompt only for overwrite cases during import or for reconciliation cases
+10. Prompt only for overwrite cases during import or for reconciliation cases
    where identity cannot be safely confirmed or recency is ambiguous.
-10. Print a success message summarizing what happened.
+11. Print a success message summarizing what happened.
 
 ### Push Flow
 

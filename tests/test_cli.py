@@ -837,6 +837,50 @@ def test_import_newer_external_overwrites_without_prompt(
     assert store_module.load_profile("work")["tokens"]["account_id"] == "external-account-id"
 
 
+def test_import_removes_blacklisted_local_profile(runner, saved_profile, monkeypatch, tmp_path):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (sync_dir / ".gitignore").write_text("work.json\n")
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(cli, ["import"])
+
+    assert result.exit_code == 0
+    assert "Removed blacklisted profile work" in result.output
+    assert store_module.list_profiles() == []
+
+
+def test_import_blacklist_clears_active_marker(runner, saved_profile, monkeypatch, tmp_path):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (sync_dir / ".gitignore").write_text("/work.json\n")
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+    store_module.set_active("work")
+
+    result = runner.invoke(cli, ["import"])
+
+    assert result.exit_code == 0
+    assert "Removed blacklisted profile work" in result.output
+    assert store_module.get_active() is None
+
+
+def test_import_skips_blacklisted_sync_file(runner, sample_profile, monkeypatch, tmp_path):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (sync_dir / "work.json").write_text(json.dumps(sample_profile))
+    (sync_dir / ".gitignore").write_text("work.json\n")
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(cli, ["import"])
+
+    assert result.exit_code == 0
+    assert "Imported profile work" not in result.output
+    assert store_module.list_profiles() == []
+
+
 def test_import_older_external_shows_timestamps_and_can_skip(
     runner, sample_profile, monkeypatch, tmp_path
 ):
@@ -1088,6 +1132,40 @@ def test_pull_updates_local_auth_from_newer_imported_active_profile(runner, monk
     assert result.exit_code == 0
     assert "Updated ~/.codex/auth.json from imported active profile 'work'." in result.output
     assert json.loads(store_module.CODEX_AUTH.read_text())["tokens"]["access_token"] == "new-access"
+
+
+def test_pull_removes_blacklisted_local_profile(runner, monkeypatch, tmp_path):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (sync_dir / ".gitignore").write_text("work.json\n")
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+    store_module.save_profile("work", {
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": None,
+        "tokens": {
+            "id_token": "fake.id.token",
+            "access_token": "fake-access-token",
+            "refresh_token": "fake-refresh-token",
+            "account_id": "fake-account-id",
+        },
+        "last_refresh": "2025-01-01T00:00:00+00:00",
+    })
+
+    def fake_run(cmd, cwd, capture_output, text, check):
+        if cmd == ["git", "rev-parse", "--is-inside-work-tree"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="true\n", stderr="")
+        if cmd == ["git", "pull", "--no-rebase", "--no-edit"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="Already up to date.\n", stderr="")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    monkeypatch.setattr(git_sync_module.subprocess, "run", fake_run)
+
+    result = runner.invoke(cli, ["pull"])
+
+    assert result.exit_code == 0
+    assert "Removed blacklisted profile work" in result.output
+    assert store_module.list_profiles() == []
 
 
 def test_pull_failure_surfaces_git_error(runner, monkeypatch, tmp_path):
