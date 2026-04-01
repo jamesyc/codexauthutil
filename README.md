@@ -105,6 +105,8 @@ Directly activate by name (no prompt):
 
 This copies the profile to `~/.codex/auth.json` and backs up the previous file to `~/.codexauth/auth.json.bak`.
 
+If `~/.codex/auth.json` already exists, activation overwrites that file in place, so the inode is preserved and existing hard links keep working. If the file does not exist yet, the tool must create it, which necessarily creates a new inode.
+
 ## Check active profile
 
 ```bash
@@ -209,6 +211,18 @@ When `CODEXAUTH_SYNC_DIR` is configured, imported and exported profiles are stor
 ```
 
 These files are copied with metadata preserved so modified times stay meaningful during overwrite prompts.
+
+# File write semantics
+
+The tool treats inode preservation as a compatibility property for existing auth files:
+
+- `use` and reconcile flows overwrite an existing `~/.codex/auth.json` in place instead of swapping it with a new file
+- this preserves the inode number for an already-existing active auth file, so hard links continue to point at the updated contents
+- if `~/.codex/auth.json` does not exist yet, the tool creates it, and a new inode is unavoidable
+- `activate` preserves the selected profile's modified time on `~/.codex/auth.json`
+- `save_codex_auth` writes fresh JSON and therefore gives `~/.codex/auth.json` a fresh modified time
+- `add`, `import`, and `export` preserve source modified times because sync conflict prompts depend on those timestamps
+- token refresh writes intentionally update stored profile modified time because the stored content actually changed
 
 # Notes
 
