@@ -1,6 +1,7 @@
 """Profile storage: read/write token files and active marker."""
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -20,6 +21,27 @@ def _ensure_store():
     TOKENS_DIR.mkdir(mode=0o700, exist_ok=True)
 
 
+def _write_json_in_place(path: Path, data: dict):
+    """Overwrite JSON content without replacing the destination inode."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2)
+    path.chmod(0o600)
+
+
+def _copy_file_in_place(src: Path, dest: Path, *, preserve_mtime: bool):
+    """Copy file contents without replacing the destination inode when it exists."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with src.open("rb") as source_handle, dest.open("wb") as dest_handle:
+        shutil.copyfileobj(source_handle, dest_handle)
+
+    if preserve_mtime:
+        stat = src.stat()
+        os.utime(dest, (stat.st_atime, stat.st_mtime))
+
+    dest.chmod(0o600)
+
+
 def list_profiles() -> list[str]:
     _ensure_store()
     return sorted(p.stem for p in TOKENS_DIR.glob("*.json"))
@@ -35,22 +57,13 @@ def load_profile(name: str) -> dict:
 def save_profile(name: str, data: dict):
     _ensure_store()
     path = TOKENS_DIR / f"{name}.json"
-    path.write_text(json.dumps(data, indent=2))
-    path.chmod(0o600)
+    _write_json_in_place(path, data)
 
 
 def save_profile_from_file(name: str, source_path: Path, preserve_mtime: bool = True):
     _ensure_store()
     dest_path = TOKENS_DIR / f"{name}.json"
-    if preserve_mtime:
-        shutil.copy2(source_path, dest_path)
-    else:
-        shutil.copyfile(source_path, dest_path)
-    dest_path.chmod(0o600)
-
-    if not preserve_mtime:
-        dest_path.touch()
-        dest_path.chmod(0o600)
+    _copy_file_in_place(source_path, dest_path, preserve_mtime=preserve_mtime)
 
 
 def delete_profile(name: str):
@@ -78,9 +91,7 @@ def save_codex_auth(data: dict):
     if CODEX_AUTH.exists():
         _ensure_store()
         shutil.copy2(CODEX_AUTH, CODEX_AUTH_BACKUP)
-    CODEX_AUTH.parent.mkdir(parents=True, exist_ok=True)
-    CODEX_AUTH.write_text(json.dumps(data, indent=2))
-    CODEX_AUTH.chmod(0o600)
+    _write_json_in_place(CODEX_AUTH, data)
 
 
 def activate(name: str):
@@ -90,7 +101,5 @@ def activate(name: str):
         raise ProfileNotFoundError(f"Profile '{name}' not found.")
     if CODEX_AUTH.exists():
         shutil.copy2(CODEX_AUTH, CODEX_AUTH_BACKUP)
-    CODEX_AUTH.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, CODEX_AUTH)
-    CODEX_AUTH.chmod(0o600)
+    _copy_file_in_place(src, CODEX_AUTH, preserve_mtime=True)
     set_active(name)
