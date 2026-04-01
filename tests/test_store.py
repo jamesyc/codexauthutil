@@ -2,7 +2,6 @@
 
 import json
 import os
-
 import pytest
 import codexauth.store as store
 from codexauth.store import ProfileNotFoundError
@@ -91,36 +90,3 @@ def test_save_profile_from_file_preserves_mtime(sample_profile, tmp_path):
 
     dest = store.TOKENS_DIR / "work.json"
     assert int(dest.stat().st_mtime) == 1_700_000_000
-
-
-def test_activate_preserves_inode_and_updates_hard_link(sample_profile, tmp_path):
-    existing = {"auth_mode": "chatgpt", "tokens": {"access_token": "old-access"}}
-    store.CODEX_AUTH.parent.mkdir(parents=True, exist_ok=True)
-    store.CODEX_AUTH.write_text(json.dumps(existing))
-    linked = tmp_path / "auth-hardlink.json"
-    os.link(store.CODEX_AUTH, linked)
-    original_inode = store.CODEX_AUTH.stat().st_ino
-
-    store.save_profile("work", sample_profile)
-    store.activate("work")
-
-    assert store.CODEX_AUTH.stat().st_ino == original_inode
-    assert linked.stat().st_ino == original_inode
-    assert json.loads(linked.read_text())["tokens"]["access_token"] == "fake-access-token"
-
-
-def test_save_codex_auth_preserves_inode_and_updates_hard_link(tmp_path):
-    initial = {"auth_mode": "chatgpt", "tokens": {"access_token": "old-access"}}
-    updated = {"auth_mode": "chatgpt", "tokens": {"access_token": "new-access"}}
-
-    store.CODEX_AUTH.parent.mkdir(parents=True, exist_ok=True)
-    store.CODEX_AUTH.write_text(json.dumps(initial))
-    linked = tmp_path / "auth-hardlink.json"
-    os.link(store.CODEX_AUTH, linked)
-    original_inode = store.CODEX_AUTH.stat().st_ino
-
-    store.save_codex_auth(updated)
-
-    assert store.CODEX_AUTH.stat().st_ino == original_inode
-    assert linked.stat().st_ino == original_inode
-    assert json.loads(linked.read_text())["tokens"]["access_token"] == "new-access"

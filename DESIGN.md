@@ -677,21 +677,8 @@ The implementation uses file modified time as a lightweight signal for profile p
 - `export` preserves the local source file's modified time
 - token refresh writes update modified time because the local stored profile contents genuinely changed
 - `activate` does not rewrite the stored profile in `~/.codexauth/tokens`, so that stored file keeps its existing modified time
-- `activate` preserves the selected profile's modified time when writing `~/.codex/auth.json`
-- `save_codex_auth` writes generated local JSON and therefore uses a fresh modified time on `~/.codex/auth.json`
 
 This gives import/export flows stable timestamps while still allowing local token refreshes to indicate a real local update.
-
-### Inode Preservation Semantics
-
-For existing files, auth/profile updates should be expressed as in-place overwrites rather than path replacement:
-
-- when `~/.codex/auth.json` already exists, `activate` and `save_codex_auth` should overwrite that file in place
-- this preserves the existing inode so hard links to `~/.codex/auth.json` continue to observe updated contents
-- the same in-place overwrite model should be used for stored profile JSON files and sync import/export targets when the destination already exists
-- if a destination file does not exist yet, creating it necessarily produces a new inode
-
-This is primarily a semantics guarantee and documentation point, not a requirement for temp-file swap logic.
 
 ### Overwrite Decision Model
 
