@@ -104,11 +104,15 @@ def _is_standard_window_depleted(window: UsageWindow) -> bool:
     return window.used_pct is not None and window.used_pct >= 100
 
 
+def _is_standard_window_unavailable(window: UsageWindow) -> bool:
+    return window.used_pct is None and window.reset_at is None
+
+
 def _is_profile_depleted(usage: UsageResult) -> bool:
-    return any(
-        _is_standard_window_depleted(_get_window(usage, key))
-        for key in ("primary_window", "secondary_window")
-    )
+    standard_windows = [_get_window(usage, key) for key in ("primary_window", "secondary_window")]
+    return any(_is_standard_window_depleted(window) for window in standard_windows) or all(
+        _is_standard_window_unavailable(window) for window in standard_windows
+    ) or _is_standard_window_unavailable(_get_window(usage, "primary_window"))
 
 
 def _profile_name_text(name: str, usage: UsageResult) -> Text:
