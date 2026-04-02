@@ -100,6 +100,21 @@ def _active_marker(name: str, active: str | None) -> str:
     return "[green]●[/green]" if name == active else ""
 
 
+def _is_standard_window_depleted(window: UsageWindow) -> bool:
+    return window.used_pct is not None and window.used_pct >= 100
+
+
+def _is_profile_depleted(usage: UsageResult) -> bool:
+    return any(
+        _is_standard_window_depleted(_get_window(usage, key))
+        for key in ("primary_window", "secondary_window")
+    )
+
+
+def _profile_name_text(name: str, usage: UsageResult) -> Text:
+    return Text(name, style="bold red" if _is_profile_depleted(usage) else "bold")
+
+
 def _window_spec(key: str) -> dict[str, str]:
     if key in WINDOW_SPECS:
         return WINDOW_SPECS[key]
@@ -196,7 +211,7 @@ def _render_full_table(
         mode = profile_data.get(name, {}).get("auth_mode", "?")
         row = [
             str(i),
-            name,
+            _profile_name_text(name, u),
             mode,
         ]
         for key in _usage_window_keys(usage_map):
@@ -240,7 +255,7 @@ def _render_compact_table(
         mode = profile_data.get(name, {}).get("auth_mode", "?")
         row = [
             str(i),
-            name,
+            _profile_name_text(name, u),
             mode,
         ]
         for key in _usage_window_keys(usage_map):
@@ -270,7 +285,8 @@ def _render_narrow_profiles(
         mode = profile_data.get(name, {}).get("auth_mode", "?")
 
         title = Text()
-        title.append(f"{i}. {name}", style="bold")
+        title.append(f"{i}. ", style="bold")
+        title.append(name, style="bold red" if _is_profile_depleted(u) else "bold")
         if name == active:
             title.append(" ●", style="green")
         title.append(f"  {mode}", style="dim")

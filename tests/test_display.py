@@ -214,3 +214,100 @@ def test_render_table_shows_weekly_only_usage_in_weekly_columns(monkeypatch):
     assert "N/A" in output
     assert "100%" in output
     assert "3d 5h" in output
+
+
+def test_render_table_marks_name_red_when_primary_usage_depleted(monkeypatch):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 3, 13, 15, 4, 5, tzinfo=timezone.utc)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(display_module, "datetime", FrozenDateTime)
+
+    table = render_table(
+        profiles=["user@example.com"],
+        profile_data={"user@example.com": {"auth_mode": "chatgpt"}},
+        usage_map={
+            "user@example.com": UsageResult(
+                primary_pct=100,
+                secondary_pct=38,
+                primary_reset_at=datetime(2026, 3, 13, 19, 16, 5, tzinfo=timezone.utc),
+                secondary_reset_at=datetime(2026, 3, 15, 18, 4, 5, tzinfo=timezone.utc),
+            )
+        },
+        active=None,
+        width=160,
+    )
+
+    console = Console(record=True, width=160)
+    console.print(table)
+    output = console.export_text(styles=True)
+
+    assert "\x1b[1;31muser@example.com\x1b[0m" in output
+
+
+def test_render_table_marks_name_red_when_secondary_usage_depleted_compact(monkeypatch):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 3, 13, 15, 4, 5, tzinfo=timezone.utc)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(display_module, "datetime", FrozenDateTime)
+
+    table = render_table(
+        profiles=["user@example.com"],
+        profile_data={"user@example.com": {"auth_mode": "chatgpt"}},
+        usage_map={
+            "user@example.com": UsageResult(
+                primary_pct=74,
+                secondary_pct=100,
+                primary_reset_at=datetime(2026, 3, 13, 19, 16, 5, tzinfo=timezone.utc),
+                secondary_reset_at=datetime(2026, 3, 15, 18, 4, 5, tzinfo=timezone.utc),
+            )
+        },
+        active=None,
+        width=90,
+    )
+
+    console = Console(record=True, width=90)
+    console.print(table)
+    output = console.export_text(styles=True)
+
+    assert "\x1b[1;31muser@example.com\x1b[0m" in output
+
+
+def test_render_table_marks_name_red_when_weekly_only_usage_depleted_narrow(monkeypatch):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 3, 24, 23, 43, 6, tzinfo=timezone.utc)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(display_module, "datetime", FrozenDateTime)
+
+    table = render_table(
+        profiles=["user@example.com"],
+        profile_data={"user@example.com": {"auth_mode": "chatgpt"}},
+        usage_map={
+            "user@example.com": UsageResult(
+                windows={
+                    "secondary_window": UsageWindow(
+                        key="secondary_window",
+                        used_pct=100,
+                        reset_at=datetime(2026, 3, 28, 5, 36, 33, tzinfo=timezone.utc),
+                        limit_window_seconds=604800,
+                    )
+                }
+            )
+        },
+        active=None,
+        width=50,
+    )
+
+    console = Console(record=True, width=50)
+    console.print(table)
+    output = console.export_text(styles=True)
+
+    assert "\x1b[1;31muser@example.com\x1b[0m" in output
