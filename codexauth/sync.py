@@ -9,6 +9,8 @@ from pathlib import Path
 from codexauth import store
 from codexauth.store import ProfileNotFoundError
 
+HIDDEN_SYNC_FILE = "hidden"
+
 
 @dataclass
 class SyncCandidate:
@@ -121,6 +123,35 @@ def export_profile(name: str, dest_path: Path):
     dest_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_path, dest_path)
     dest_path.chmod(0o600)
+
+
+def import_hidden_profiles(sync_dir: Path) -> bool:
+    source_path = sync_dir / HIDDEN_SYNC_FILE
+    if not source_path.exists():
+        return False
+    names = {
+        line.strip()
+        for line in source_path.read_text().splitlines()
+        if line.strip()
+    }
+    store.save_hidden_profiles(names)
+    return True
+
+
+def export_hidden_profiles(sync_dir: Path) -> bool:
+    names = store.list_hidden_profiles()
+    dest_path = sync_dir / HIDDEN_SYNC_FILE
+    if not names:
+        if dest_path.exists():
+            dest_path.write_text("")
+            dest_path.chmod(0o600)
+            return True
+        return False
+
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    dest_path.write_text("".join(f"{name}\n" for name in sorted(names)))
+    dest_path.chmod(0o600)
+    return True
 
 
 def format_modified(value: datetime | None) -> str:

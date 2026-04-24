@@ -96,8 +96,9 @@ Flags:
 - `--no-usage` — skip the API call for faster output
 - `--all` — include profiles hidden from the default list
 
-Profiles can be hidden from the default list without being deleted or excluded
-from sync:
+Profiles can be hidden from the default list without being deleted or banned.
+Hidden preferences are synced with `push` and `pull` when `CODEXAUTH_SYNC_DIR`
+is configured:
 
 ```bash
 ./codexauth.py hide old-work
@@ -205,7 +206,7 @@ Profiles are stored in `~/.codexauth/`:
 │   ├── work.json       # saved auth.json profiles (chmod 600)
 │   └── personal.json
 ├── active              # name of the currently active profile
-├── hidden              # local list-view preference for hidden profile names
+├── hidden              # list-view preference for hidden profile names
 └── auth.json.bak       # backup of the last overwritten auth.json
 ```
 
@@ -218,10 +219,11 @@ When `CODEXAUTH_SYNC_DIR` is configured, imported and exported profiles are stor
 ```text
 ~/codex-profiles/
 ├── work.json
-└── personal.json
+├── personal.json
+└── hidden
 ```
 
-These files are copied with metadata preserved so modified times stay meaningful during overwrite prompts.
+Profile JSON files are copied with metadata preserved so modified times stay meaningful during overwrite prompts. The `hidden` file is a newline-delimited list of profile names hidden from the default list view.
 
 # File write semantics
 

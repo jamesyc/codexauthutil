@@ -32,8 +32,10 @@ from codexauth.sync import (
     SyncCandidate,
     build_export_candidates,
     build_import_candidates,
+    export_hidden_profiles,
     export_profile,
     format_modified,
+    import_hidden_profiles,
     import_profile,
     list_blacklisted_profiles,
 )
@@ -466,10 +468,6 @@ def _run_import(sync_dir: Path) -> set[str]:
         for candidate in build_import_candidates(sync_dir)
         if candidate.name not in blacklisted_names
     ]
-    if not candidates and not blacklisted_names:
-        console.print(f"[dim]No profiles found in [bold]{sync_dir}[/bold].[/dim]")
-        return set()
-
     imported = 0
     imported_names: set[str] = set()
     for candidate in candidates:
@@ -495,14 +493,28 @@ def _run_import(sync_dir: Path) -> set[str]:
             f"[green]✓[/green] Removed blacklisted profile [bold]{name}[/bold]"
         )
 
-    if imported == 0 and removed == 0:
+    hidden_imported = import_hidden_profiles(sync_dir)
+    if hidden_imported:
+        console.print("[green]✓[/green] Imported hidden profile preferences")
+
+    if imported == 0 and removed == 0 and not hidden_imported:
+        if not candidates and not blacklisted_names:
+            console.print(f"[dim]No profiles found in [bold]{sync_dir}[/bold].[/dim]")
+        else:
+            console.print("[dim]No profiles imported.[/dim]")
+    elif imported == 0 and removed == 0:
         console.print("[dim]No profiles imported.[/dim]")
     return imported_names
 
 
 def _run_export(sync_dir: Path) -> None:
     candidates = build_export_candidates(sync_dir)
+    hidden_exported = export_hidden_profiles(sync_dir)
     if not candidates:
+        if hidden_exported:
+            console.print("[green]✓[/green] Exported hidden profile preferences")
+        else:
+            console.print("[dim]No hidden profile preferences to export.[/dim]")
         console.print("[dim]No local profiles stored to export.[/dim]")
         return
 
@@ -515,6 +527,9 @@ def _run_export(sync_dir: Path) -> None:
         export_profile(candidate.name, candidate.dest_path)
         exported += 1
         console.print(f"[green]✓[/green] Exported profile [bold]{candidate.name}[/bold]")
+
+    if hidden_exported:
+        console.print("[green]✓[/green] Exported hidden profile preferences")
 
     if exported == 0:
         console.print("[dim]No profiles exported.[/dim]")

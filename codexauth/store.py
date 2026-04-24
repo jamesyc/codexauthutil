@@ -70,6 +70,10 @@ def _save_hidden_profiles(names: set[str]) -> None:
         HIDDEN_FILE.unlink(missing_ok=True)
 
 
+def save_hidden_profiles(names: set[str]) -> None:
+    _save_hidden_profiles(names)
+
+
 def list_visible_profiles() -> list[str]:
     hidden = list_hidden_profiles()
     return [name for name in list_profiles() if name not in hidden]

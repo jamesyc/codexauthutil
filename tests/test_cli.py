@@ -875,6 +875,45 @@ def test_import_imports_all_profiles_by_default(runner, sample_profile, monkeypa
     assert int(imported_path.stat().st_mtime) == 1_700_000_000
 
 
+def test_import_syncs_hidden_profile_preferences(
+    runner, sample_profile, monkeypatch, tmp_path
+):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (sync_dir / "work.json").write_text(json.dumps(sample_profile))
+    personal = dict(sample_profile)
+    personal["tokens"] = dict(sample_profile["tokens"])
+    personal["tokens"]["account_id"] = "personal-account-id"
+    (sync_dir / "personal.json").write_text(json.dumps(personal))
+    (sync_dir / "hidden").write_text("work\nmissing\n")
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(cli, ["import"])
+
+    assert result.exit_code == 0
+    assert "Imported hidden profile preferences" in result.output
+    assert store_module.list_hidden_profiles() == {"work"}
+    assert store_module.list_visible_profiles() == ["personal"]
+
+
+def test_import_empty_hidden_file_clears_local_hidden_preferences(
+    runner, saved_profile, monkeypatch, tmp_path
+):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (sync_dir / "hidden").write_text("")
+    store_module.hide_profile("work")
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(cli, ["import"])
+
+    assert result.exit_code == 0
+    assert "Imported hidden profile preferences" in result.output
+    assert store_module.list_hidden_profiles() == set()
+
+
 def test_import_newer_external_overwrites_without_prompt(
     runner, sample_profile, monkeypatch, tmp_path
 ):
@@ -1013,6 +1052,37 @@ def test_export_includes_hidden_profiles(runner, saved_profile, monkeypatch, tmp
     assert (sync_dir / "work.json").exists()
 
 
+def test_export_syncs_hidden_profile_preferences(
+    runner, saved_profile, monkeypatch, tmp_path
+):
+    sync_dir = tmp_path / "sync"
+    store_module.hide_profile("work")
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(cli, ["export"])
+
+    assert result.exit_code == 0
+    assert "Exported hidden profile preferences" in result.output
+    assert (sync_dir / "hidden").read_text() == "work\n"
+
+
+def test_export_empty_hidden_preferences_clears_existing_sync_file(
+    runner, saved_profile, monkeypatch, tmp_path
+):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (sync_dir / "hidden").write_text("work\n")
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(cli, ["export"])
+
+    assert result.exit_code == 0
+    assert "Exported hidden profile preferences" in result.output
+    assert (sync_dir / "hidden").read_text() == ""
+
+
 def test_export_newer_local_overwrites_without_prompt(
     runner, saved_profile, monkeypatch, tmp_path
 ):
@@ -1128,6 +1198,30 @@ def test_pull_success(runner, sample_profile, monkeypatch, tmp_path):
         (["git", "rev-parse", "--is-inside-work-tree"], sync_dir),
         (["git", "pull", "--no-rebase", "--no-edit"], sync_dir),
     ]
+
+
+def test_pull_syncs_hidden_profile_preferences(runner, sample_profile, monkeypatch, tmp_path):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (sync_dir / "work.json").write_text(json.dumps(sample_profile))
+    (sync_dir / "hidden").write_text("work\n")
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    def fake_run(cmd, cwd, capture_output, text, check):
+        if cmd == ["git", "rev-parse", "--is-inside-work-tree"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="true\n", stderr="")
+        if cmd == ["git", "pull", "--no-rebase", "--no-edit"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="Already up to date.\n", stderr="")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    monkeypatch.setattr(git_sync_module.subprocess, "run", fake_run)
+
+    result = runner.invoke(cli, ["pull"])
+
+    assert result.exit_code == 0
+    assert "Imported hidden profile preferences" in result.output
+    assert store_module.list_hidden_profiles() == {"work"}
 
 
 def test_pull_reconciles_active_profile_before_git_pull(runner, monkeypatch, tmp_path):
@@ -1371,6 +1465,48 @@ def test_push_success(runner, monkeypatch, tmp_path):
         (["git", "pull", "--no-rebase", "--no-edit"], sync_dir),
         (["git", "push"], sync_dir),
     ]
+
+
+def test_push_syncs_hidden_profile_preferences(runner, monkeypatch, tmp_path):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+    store_module.save_profile("work", {
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": None,
+        "tokens": {
+            "id_token": "fake.id.token",
+            "access_token": "fake-access-token",
+            "refresh_token": "fake-refresh-token",
+            "account_id": "fake-account-id",
+        },
+        "last_refresh": "2025-01-01T00:00:00+00:00",
+    })
+    store_module.hide_profile("work")
+
+    def fake_run(cmd, cwd, capture_output, text, check):
+        if cmd == ["git", "rev-parse", "--is-inside-work-tree"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="true\n", stderr="")
+        if cmd == ["git", "add", "."]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd == ["git", "diff", "--cached", "--quiet"]:
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+        if cmd == ["git", "commit", "-m", "Update exported codexauth profiles"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="[main abc123] Update exported codexauth profiles\n", stderr="")
+        if cmd == ["git", "pull", "--no-rebase", "--no-edit"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="Already up to date.\n", stderr="")
+        if cmd == ["git", "push"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="pushed\n", stderr="")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    monkeypatch.setattr(git_sync_module.subprocess, "run", fake_run)
+
+    result = runner.invoke(cli, ["push"])
+
+    assert result.exit_code == 0
+    assert "Exported hidden profile preferences" in result.output
+    assert (sync_dir / "hidden").read_text() == "work\n"
 
 
 def test_push_commit_failure_stops_before_push(runner, monkeypatch, tmp_path):

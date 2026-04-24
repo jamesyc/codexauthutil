@@ -112,10 +112,10 @@ the matching local stored profile should be considered disallowed.
   - time left until the weekly window resets
 - Uses the full multi-column table on wide terminals, a compact table on medium widths, and a stacked per-profile layout on narrow screens so phone-sized terminals remain readable.
 - Can prompt the user to activate a profile interactively unless `--no-interactive` is passed.
-- Excludes locally hidden profiles by default. `--all` includes hidden profiles
-  and labels them as hidden. Hidden profiles remain stored, activatable, and
-  eligible for import/export; hiding is only a list-view preference stored in
-  `~/.codexauth/hidden`.
+- Excludes hidden profiles by default. `--all` includes hidden profiles and
+  labels them as hidden. Hidden profiles remain stored, activatable, and
+  exported/imported; hiding is a list-view preference stored in
+  `~/.codexauth/hidden` and synced as `<CODEXAUTH_SYNC_DIR>/hidden`.
 
 ### `codexauth add <name>`
 
@@ -439,6 +439,8 @@ This keeps configuration simple and avoids adding another persistent config syst
 8. If the sync directory's `.gitignore` blacklists a profile JSON file, treat
    that as a removal instruction and run the equivalent of `codexauth remove
    <name>` against the local store for that profile.
+9. If `<CODEXAUTH_SYNC_DIR>/hidden` exists, import it as the local hidden
+   profile preference after profile imports and blacklist removals.
 
 Key UX requirement:
 
@@ -495,14 +497,15 @@ The push command should behave as follows:
 
 1. Read the external profile directory from `.env`.
 2. Export all local profiles into the sync directory.
-3. Fail with a clear error if the directory does not exist.
-4. Fail with a clear error if the directory is not inside a Git working tree.
-5. Run `git add .` from that directory.
-6. Check whether staging produced any changes.
-7. If there are no staged changes, print a no-op message and stop without committing or pushing.
-8. If there are staged changes, run `git commit -m <message>`.
-9. Run `git push`.
-10. Print a success message summarizing what happened.
+3. Export the local hidden profile preference to `<CODEXAUTH_SYNC_DIR>/hidden`.
+4. Fail with a clear error if the directory does not exist.
+5. Fail with a clear error if the directory is not inside a Git working tree.
+6. Run `git add .` from that directory.
+7. Check whether staging produced any changes.
+8. If there are no staged changes, print a no-op message and stop without committing or pushing.
+9. If there are staged changes, run `git commit -m <message>`.
+10. Run `git push`.
+11. Print a success message summarizing what happened.
 
 ### Commit Message Strategy
 
