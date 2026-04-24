@@ -112,6 +112,10 @@ the matching local stored profile should be considered disallowed.
   - time left until the weekly window resets
 - Uses the full multi-column table on wide terminals, a compact table on medium widths, and a stacked per-profile layout on narrow screens so phone-sized terminals remain readable.
 - Can prompt the user to activate a profile interactively unless `--no-interactive` is passed.
+- Excludes locally hidden profiles by default. `--all` includes hidden profiles
+  and labels them as hidden. Hidden profiles remain stored, activatable, and
+  eligible for import/export; hiding is only a list-view preference stored in
+  `~/.codexauth/hidden`.
 
 ### `codexauth add <name>`
 

@@ -115,7 +115,11 @@ def _is_profile_depleted(usage: UsageResult) -> bool:
     ) or _is_standard_window_unavailable(_get_window(usage, "primary_window"))
 
 
-def _profile_name_text(name: str, usage: UsageResult) -> Text:
+def _profile_name_text(name: str, usage: UsageResult, hidden: bool = False) -> Text:
+    if hidden:
+        text = Text(name, style="dim")
+        text.append(" (hidden)", style="dim")
+        return text
     return Text(name, style="bold red" if _is_profile_depleted(usage) else "bold")
 
 
@@ -191,6 +195,7 @@ def _render_full_table(
     profile_data: dict[str, dict],
     usage_map: dict[str, UsageResult],
     active: str | None,
+    hidden_profiles: set[str] | None = None,
 ) -> Table:
     table = Table(
         box=box.SIMPLE,
@@ -215,7 +220,7 @@ def _render_full_table(
         mode = profile_data.get(name, {}).get("auth_mode", "?")
         row = [
             str(i),
-            _profile_name_text(name, u),
+            _profile_name_text(name, u, hidden=name in (hidden_profiles or set())),
             mode,
         ]
         for key in _usage_window_keys(usage_map):
@@ -236,6 +241,7 @@ def _render_compact_table(
     profile_data: dict[str, dict],
     usage_map: dict[str, UsageResult],
     active: str | None,
+    hidden_profiles: set[str] | None = None,
 ) -> Table:
     table = Table(
         box=box.SIMPLE,
@@ -259,7 +265,7 @@ def _render_compact_table(
         mode = profile_data.get(name, {}).get("auth_mode", "?")
         row = [
             str(i),
-            _profile_name_text(name, u),
+            _profile_name_text(name, u, hidden=name in (hidden_profiles or set())),
             mode,
         ]
         for key in _usage_window_keys(usage_map):
@@ -280,6 +286,7 @@ def _render_narrow_profiles(
     profile_data: dict[str, dict],
     usage_map: dict[str, UsageResult],
     active: str | None,
+    hidden_profiles: set[str] | None = None,
 ) -> Group:
     renders: list[Text] = []
     window_keys = _usage_window_keys(usage_map)
@@ -290,7 +297,11 @@ def _render_narrow_profiles(
 
         title = Text()
         title.append(f"{i}. ", style="bold")
-        title.append(name, style="bold red" if _is_profile_depleted(u) else "bold")
+        if name in (hidden_profiles or set()):
+            title.append(name, style="dim")
+            title.append(" (hidden)", style="dim")
+        else:
+            title.append(name, style="bold red" if _is_profile_depleted(u) else "bold")
         if name == active:
             title.append(" ●", style="green")
         title.append(f"  {mode}", style="dim")
@@ -315,16 +326,23 @@ def render_table(
     usage_map: dict[str, UsageResult],
     active: str | None,
     width: int | None = None,
+    hidden_profiles: set[str] | None = None,
 ):
     window_count = len(_usage_window_keys(usage_map))
     narrow_threshold = 80 + max(window_count - 2, 0) * 18
     compact_threshold = 140 + max(window_count - 2, 0) * 10
 
     if width is not None and width < narrow_threshold:
-        return _render_narrow_profiles(profiles, profile_data, usage_map, active)
+        return _render_narrow_profiles(
+            profiles, profile_data, usage_map, active, hidden_profiles=hidden_profiles
+        )
     if width is not None and width < compact_threshold:
-        return _render_compact_table(profiles, profile_data, usage_map, active)
-    return _render_full_table(profiles, profile_data, usage_map, active)
+        return _render_compact_table(
+            profiles, profile_data, usage_map, active, hidden_profiles=hidden_profiles
+        )
+    return _render_full_table(
+        profiles, profile_data, usage_map, active, hidden_profiles=hidden_profiles
+    )
 
 
 def interactive_prompt(profiles: list[str]) -> str | None:

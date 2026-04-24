@@ -23,12 +23,14 @@ def isolated_store(tmp_path, monkeypatch):
     store_dir = tmp_path / ".codexauth"
     tokens_dir = store_dir / "tokens"
     active_file = store_dir / "active"
+    hidden_file = store_dir / "hidden"
     codex_auth = tmp_path / ".codex" / "auth.json"
     codex_backup = store_dir / "auth.json.bak"
 
     monkeypatch.setattr(store_module, "STORE_DIR", store_dir)
     monkeypatch.setattr(store_module, "TOKENS_DIR", tokens_dir)
     monkeypatch.setattr(store_module, "ACTIVE_FILE", active_file)
+    monkeypatch.setattr(store_module, "HIDDEN_FILE", hidden_file)
     monkeypatch.setattr(store_module, "CODEX_AUTH", codex_auth)
     monkeypatch.setattr(store_module, "CODEX_AUTH_BACKUP", codex_backup)
 

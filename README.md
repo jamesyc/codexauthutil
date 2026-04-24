@@ -94,6 +94,16 @@ Activate token (enter number, or q to quit): _
 Flags:
 - `--no-interactive` — print the table and exit (useful for scripting)
 - `--no-usage` — skip the API call for faster output
+- `--all` — include profiles hidden from the default list
+
+Profiles can be hidden from the default list without being deleted or excluded
+from sync:
+
+```bash
+./codexauth.py hide old-work
+./codexauth.py list --all
+./codexauth.py unhide old-work
+```
 
 ## Activate a profile
 
@@ -195,6 +205,7 @@ Profiles are stored in `~/.codexauth/`:
 │   ├── work.json       # saved auth.json profiles (chmod 600)
 │   └── personal.json
 ├── active              # name of the currently active profile
+├── hidden              # local list-view preference for hidden profile names
 └── auth.json.bak       # backup of the last overwritten auth.json
 ```
 

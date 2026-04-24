@@ -479,6 +479,73 @@ def test_list_shows_profiles(runner, saved_profile, monkeypatch):
     assert "work" in result.output
 
 
+def test_hide_excludes_profile_from_default_list(runner, saved_profile, sample_profile):
+    personal = dict(sample_profile)
+    personal["tokens"] = dict(sample_profile["tokens"])
+    personal["tokens"]["account_id"] = "personal-account-id"
+    store_module.save_profile("personal", personal)
+
+    hide_result = runner.invoke(cli, ["hide", "work"])
+    list_result = runner.invoke(cli, ["list", "--no-usage", "--no-interactive"])
+
+    assert hide_result.exit_code == 0
+    assert "Hidden profile work" in hide_result.output
+    assert list_result.exit_code == 0
+    assert "personal" in list_result.output
+    assert "work" not in list_result.output
+    assert store_module.list_profiles() == ["personal", "work"]
+
+
+def test_list_all_includes_hidden_profile(runner, saved_profile):
+    store_module.hide_profile("work")
+
+    result = runner.invoke(cli, ["list", "--all", "--no-usage", "--no-interactive"])
+
+    assert result.exit_code == 0
+    assert "work" in result.output
+    assert "hidden" in result.output
+
+
+def test_unhide_restores_profile_to_default_list(runner, saved_profile):
+    store_module.hide_profile("work")
+
+    unhide_result = runner.invoke(cli, ["unhide", "work"])
+    list_result = runner.invoke(cli, ["list", "--no-usage", "--no-interactive"])
+
+    assert unhide_result.exit_code == 0
+    assert "Unhidden profile work" in unhide_result.output
+    assert list_result.exit_code == 0
+    assert "work" in list_result.output
+
+
+def test_list_when_all_profiles_hidden_points_to_all_flag(runner, saved_profile):
+    store_module.hide_profile("work")
+
+    result = runner.invoke(cli, ["list", "--no-usage", "--no-interactive"])
+
+    assert result.exit_code == 0
+    assert "All profiles are hidden" in result.output
+    assert "list --all" in result.output
+
+
+def test_use_hidden_profile_still_activates(runner, saved_profile):
+    store_module.hide_profile("work")
+
+    result = runner.invoke(cli, ["use", "work"])
+
+    assert result.exit_code == 0
+    assert store_module.get_active() == "work"
+
+
+def test_remove_clears_hidden_entry(runner, saved_profile):
+    store_module.hide_profile("work")
+
+    result = runner.invoke(cli, ["remove", "work"])
+
+    assert result.exit_code == 0
+    assert store_module.list_hidden_profiles() == set()
+
+
 def test_list_places_table_immediately_after_timestamp(runner, saved_profile, monkeypatch):
     class FrozenDateTime(datetime):
         @classmethod
@@ -931,6 +998,19 @@ def test_export_exports_all_profiles_by_default(
     assert json.loads(exported.read_text())["auth_mode"] == "chatgpt"
     assert stat.S_IMODE(exported.stat().st_mode) == 0o600
     assert int(exported.stat().st_mtime) == 1_700_000_000
+
+
+def test_export_includes_hidden_profiles(runner, saved_profile, monkeypatch, tmp_path):
+    sync_dir = tmp_path / "sync"
+    store_module.hide_profile("work")
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(cli, ["export"])
+
+    assert result.exit_code == 0
+    assert "Exported profile work" in result.output
+    assert (sync_dir / "work.json").exists()
 
 
 def test_export_newer_local_overwrites_without_prompt(

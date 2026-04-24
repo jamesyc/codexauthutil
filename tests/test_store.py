@@ -18,6 +18,41 @@ def test_save_and_list(sample_profile):
     assert store.list_profiles() == ["personal", "work"]
 
 
+def test_hide_profile_excludes_from_visible_list(sample_profile):
+    store.save_profile("work", sample_profile)
+    store.save_profile("personal", sample_profile)
+
+    store.hide_profile("work")
+
+    assert store.list_profiles() == ["personal", "work"]
+    assert store.list_visible_profiles() == ["personal"]
+    assert store.list_hidden_profiles() == {"work"}
+
+
+def test_unhide_profile_restores_visible_list(sample_profile):
+    store.save_profile("work", sample_profile)
+    store.hide_profile("work")
+
+    store.unhide_profile("work")
+
+    assert store.list_visible_profiles() == ["work"]
+    assert store.list_hidden_profiles() == set()
+
+
+def test_hide_profile_not_found():
+    with pytest.raises(ProfileNotFoundError):
+        store.hide_profile("nonexistent")
+
+
+def test_delete_profile_clears_hidden_entry(sample_profile):
+    store.save_profile("work", sample_profile)
+    store.hide_profile("work")
+
+    store.delete_profile("work")
+
+    assert store.list_hidden_profiles() == set()
+
+
 def test_load_profile(sample_profile):
     store.save_profile("work", sample_profile)
     loaded = store.load_profile("work")

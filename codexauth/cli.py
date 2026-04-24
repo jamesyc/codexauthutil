@@ -19,10 +19,14 @@ from codexauth.store import (
     activate,
     delete_profile,
     get_active,
+    hide_profile,
+    list_hidden_profiles,
     list_profiles,
+    list_visible_profiles,
     load_profile,
     save_profile,
     save_profile_from_file,
+    unhide_profile,
 )
 from codexauth.sync import (
     SyncCandidate,
@@ -91,20 +95,34 @@ def cli(ctx):
     is_flag=True,
     help="Skip live quota lookups and show profiles immediately.",
 )
-def list_cmd(no_interactive, no_usage):
+@click.option(
+    "--all",
+    "show_all",
+    is_flag=True,
+    help="Include hidden profiles in the rendered list.",
+)
+def list_cmd(no_interactive, no_usage, show_all):
     """List profiles, auto-refresh stale ChatGPT tokens during usage lookup, and offer activation."""
-    _show_profiles(no_interactive=no_interactive, no_usage=no_usage)
+    _show_profiles(no_interactive=no_interactive, no_usage=no_usage, show_all=show_all)
 
 
-def _show_profiles(no_interactive: bool, no_usage: bool) -> None:
+def _show_profiles(no_interactive: bool, no_usage: bool, show_all: bool = False) -> None:
     """Render stored profiles and optionally prompt for activation."""
     ctx = click.get_current_context(silent=True)
     reconcile_result = _run_preflight_reconciliation(prompt_on_unsafe=False)
 
-    profiles = list_profiles()
-    if not profiles:
+    all_profiles = list_profiles()
+    if not all_profiles:
         console.print(
             "[dim]No profiles stored. Run [bold]codexauth add <name>[/bold] to add one.[/dim]"
+        )
+        return
+
+    hidden_profiles = list_hidden_profiles()
+    profiles = all_profiles if show_all else list_visible_profiles()
+    if not profiles:
+        console.print(
+            "[dim]All profiles are hidden. Run [bold]codexauth list --all[/bold] to show them.[/dim]"
         )
         return
 
@@ -124,7 +142,16 @@ def _show_profiles(no_interactive: bool, no_usage: bool) -> None:
     terminal_width = getattr(ctx, "terminal_width", None) if ctx else None
     if terminal_width is None:
         terminal_width = shutil.get_terminal_size(fallback=(console.width, 24)).columns
-    console.print(render_table(profiles, all_data, usage_map, active, width=terminal_width))
+    console.print(
+        render_table(
+            profiles,
+            all_data,
+            usage_map,
+            active,
+            width=terminal_width,
+            hidden_profiles=hidden_profiles if show_all else None,
+        )
+    )
     _maybe_offer_push_after_list_updates(
         reconcile_result=reconcile_result,
         refreshed_profiles=refreshed_profiles,
@@ -216,6 +243,40 @@ def login_cmd(name):
 
     console.print(f"[green]✓[/green] Saved profile [bold]{final_name}[/bold]")
     _show_profiles(no_interactive=True, no_usage=True)
+
+
+@cli.command(
+    "hide",
+    short_help="Hide a profile from the default list.",
+    help=(
+        "Hide a stored profile from the default `codexauth list` view without deleting it, banning it, "
+        "or changing sync behavior.\n\n"
+        "Use `codexauth list --all` to include hidden profiles."
+    ),
+)
+@click.argument("name")
+def hide_cmd(name):
+    """Hide a stored profile from the default list view."""
+    try:
+        hide_profile(name)
+    except ProfileNotFoundError as e:
+        raise click.ClickException(str(e))
+    console.print(f"[green]✓[/green] Hidden profile [bold]{name}[/bold]")
+
+
+@cli.command(
+    "unhide",
+    short_help="Show a hidden profile in the default list.",
+    help="Restore a stored profile to the default `codexauth list` view.",
+)
+@click.argument("name")
+def unhide_cmd(name):
+    """Restore a stored profile to the default list view."""
+    try:
+        unhide_profile(name)
+    except ProfileNotFoundError as e:
+        raise click.ClickException(str(e))
+    console.print(f"[green]✓[/green] Unhidden profile [bold]{name}[/bold]")
 
 
 @cli.command(
