@@ -278,6 +278,72 @@ def test_render_table_marks_name_red_when_secondary_usage_depleted_compact(monke
     assert "\x1b[1;31muser@example.com\x1b[0m" in output
 
 
+def test_render_table_marks_hidden_name_red_when_weekly_usage_is_99(monkeypatch):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 3, 13, 15, 4, 5, tzinfo=timezone.utc)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(display_module, "datetime", FrozenDateTime)
+
+    table = render_table(
+        profiles=["user@example.com"],
+        profile_data={"user@example.com": {"auth_mode": "chatgpt"}},
+        usage_map={
+            "user@example.com": UsageResult(
+                primary_pct=12,
+                secondary_pct=99,
+                primary_reset_at=datetime(2026, 3, 13, 19, 16, 5, tzinfo=timezone.utc),
+                secondary_reset_at=datetime(2026, 3, 15, 18, 4, 5, tzinfo=timezone.utc),
+            )
+        },
+        active=None,
+        width=160,
+        hidden_profiles={"user@example.com"},
+    )
+
+    console = Console(record=True, width=160)
+    console.print(table)
+    output = console.export_text(styles=True)
+
+    assert "\x1b[1;31muser@example.com\x1b[0m" in output
+    assert "(hidden)" in output
+
+
+def test_render_table_keeps_hidden_name_dim_when_weekly_usage_is_below_99(monkeypatch):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 3, 13, 15, 4, 5, tzinfo=timezone.utc)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(display_module, "datetime", FrozenDateTime)
+
+    table = render_table(
+        profiles=["user@example.com"],
+        profile_data={"user@example.com": {"auth_mode": "chatgpt"}},
+        usage_map={
+            "user@example.com": UsageResult(
+                primary_pct=100,
+                secondary_pct=98,
+                primary_reset_at=datetime(2026, 3, 13, 19, 16, 5, tzinfo=timezone.utc),
+                secondary_reset_at=datetime(2026, 3, 15, 18, 4, 5, tzinfo=timezone.utc),
+            )
+        },
+        active=None,
+        width=90,
+        hidden_profiles={"user@example.com"},
+    )
+
+    console = Console(record=True, width=90)
+    console.print(table)
+    output = console.export_text(styles=True)
+
+    assert "\x1b[1;31muser@example.com\x1b[0m" not in output
+    assert "\x1b[1;2muser@example.com" in output
+
+
 def test_render_table_marks_name_red_when_weekly_only_usage_depleted_narrow(monkeypatch):
     class FrozenDateTime(datetime):
         @classmethod

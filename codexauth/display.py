@@ -115,9 +115,15 @@ def _is_profile_depleted(usage: UsageResult) -> bool:
     ) or _is_standard_window_unavailable(_get_window(usage, "primary_window"))
 
 
+def _is_hidden_profile_urgent(usage: UsageResult) -> bool:
+    weekly_window = _get_window(usage, "secondary_window")
+    return weekly_window.used_pct is not None and weekly_window.used_pct >= 99
+
+
 def _profile_name_text(name: str, usage: UsageResult, hidden: bool = False) -> Text:
     if hidden:
-        text = Text(name, style="dim")
+        style = "bold red" if _is_hidden_profile_urgent(usage) else "dim"
+        text = Text(name, style=style)
         text.append(" (hidden)", style="dim")
         return text
     return Text(name, style="bold red" if _is_profile_depleted(usage) else "bold")
@@ -298,7 +304,7 @@ def _render_narrow_profiles(
         title = Text()
         title.append(f"{i}. ", style="bold")
         if name in (hidden_profiles or set()):
-            title.append(name, style="dim")
+            title.append(name, style="bold red" if _is_hidden_profile_urgent(u) else "dim")
             title.append(" (hidden)", style="dim")
         else:
             title.append(name, style="bold red" if _is_profile_depleted(u) else "bold")
