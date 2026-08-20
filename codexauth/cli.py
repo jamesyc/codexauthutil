@@ -108,7 +108,7 @@ def cli(ctx):
     "--all",
     "show_all",
     is_flag=True,
-    help="Include hidden profiles in the rendered list.",
+    help="Include hidden profiles and show Mode and 5-hour usage columns.",
 )
 def list_cmd(no_interactive, no_usage, show_all):
     """List profiles, auto-refresh stale ChatGPT tokens during usage lookup, and offer activation."""
@@ -281,6 +281,7 @@ def _show_profiles(no_interactive: bool, no_usage: bool, show_all: bool = False)
             active,
             width=terminal_width,
             hidden_profiles=hidden_profiles if show_all else None,
+            show_details=show_all,
         )
     )
     _maybe_offer_push_after_list_updates(

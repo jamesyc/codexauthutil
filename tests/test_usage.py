@@ -1,6 +1,7 @@
 """Tests for codexauth.usage."""
 
 import asyncio
+import base64
 import json
 import os
 from datetime import datetime, timezone
@@ -53,8 +54,56 @@ async def test_fetch_usage_success():
     assert result.secondary_pct == 74
     assert result.primary_reset_at == datetime.fromtimestamp(9999999999, tz=timezone.utc)
     assert result.secondary_reset_at == datetime.fromtimestamp(9999999999, tz=timezone.utc)
+    assert result.plan_type == "plus"
+    assert result.plan_multiplier == 1
+    assert result.weekly_plus_equivalent_left == pytest.approx(0.26)
     assert result.error is None
     assert refreshed is False
+
+
+@pytest.mark.parametrize(
+    ("plan_type", "weekly_pct", "expected"),
+    [
+        ("plus", 100, 0),
+        ("prolite", 93, 0.35),
+        ("pro", 39, 12.2),
+        ("unknown", 50, None),
+    ],
+)
+def test_weekly_plus_equivalent_left(plan_type, weekly_pct, expected):
+    usage = UsageResult(secondary_pct=weekly_pct, plan_type=plan_type)
+
+    if expected is None:
+        assert usage.weekly_plus_equivalent_left is None
+    else:
+        assert usage.weekly_plus_equivalent_left == pytest.approx(expected)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_fetch_usage_uses_token_plan_when_response_omits_tier():
+    claims = {
+        "https://api.openai.com/auth": {"chatgpt_plan_type": "prolite"},
+    }
+    payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).rstrip(b"=").decode()
+    profile = {
+        **FRESH_PROFILE,
+        "tokens": {
+            **FRESH_PROFILE["tokens"],
+            "access_token": f"header.{payload}.signature",
+        },
+    }
+    response_without_plan = {
+        key: value for key, value in USAGE_RESPONSE.items() if key != "plan_type"
+    }
+    respx.get(USAGE_URL).mock(
+        return_value=httpx.Response(200, json=response_without_plan)
+    )
+
+    _, result, _ = await fetch_usage("work", profile)
+
+    assert result.plan_type == "prolite"
+    assert result.plan_multiplier == 5
 
 
 @pytest.mark.asyncio
@@ -72,7 +121,7 @@ async def test_fetch_usage_parses_credit_balance():
     }
     respx.get(USAGE_URL).mock(return_value=httpx.Response(200, json=usage_response))
 
-    _, result, _ = await fetch_usage("edward", FRESH_PROFILE)
+    _, result, _ = await fetch_usage("alice", FRESH_PROFILE)
 
     assert result.credits == usage_module.UsageCredits(
         has_credits=True,

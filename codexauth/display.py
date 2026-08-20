@@ -5,6 +5,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from rich import box
 from rich.console import Console, Group
+from rich.markup import escape
 from rich.table import Table
 from rich.text import Text
 
@@ -182,6 +183,34 @@ def _fmt_credits(usage: UsageResult) -> str:
     return f"[dim]{text}[/dim]" if text == "—" else text
 
 
+def _plan_label(usage: UsageResult, *, compact: bool = False) -> str:
+    labels = {
+        "plus": "Plus",
+        "prolite": "Pro 5x",
+        "pro": "Pro 20x",
+    }
+    compact_labels = {
+        "plus": "1x",
+        "prolite": "5x",
+        "pro": "20x",
+    }
+    if usage.error or not isinstance(usage.plan_type, str):
+        return "[dim]N/A[/dim]"
+    fallback = escape(usage.plan_type.replace("_", " ").title())
+    normalized = usage.plan_type.lower()
+    return (compact_labels if compact else labels).get(normalized, fallback)
+
+
+def _fmt_plus_equivalent_left(usage: UsageResult) -> str:
+    remaining = usage.weekly_plus_equivalent_left
+    if usage.error == "expired":
+        return "[red]expired[/red]"
+    if remaining is None:
+        return "[dim]N/A[/dim]"
+    color = "red" if remaining == 0 else ("yellow" if remaining < 1 else "green")
+    return f"[{color}]{remaining:.2f}[/{color}]"
+
+
 def _active_marker(name: str, active: str | None) -> str:
     return "[green]●[/green]" if name == active else ""
 
@@ -286,7 +315,11 @@ def _render_full_table(
     usage_map: dict[str, UsageResult],
     active: str | None,
     hidden_profiles: set[str] | None = None,
+    show_details: bool = True,
 ) -> Table:
+    window_keys = _usage_window_keys(usage_map)
+    if not show_details:
+        window_keys = [key for key in window_keys if key != "primary_window"]
     table = Table(
         box=box.SIMPLE,
         show_header=True,
@@ -297,12 +330,15 @@ def _render_full_table(
     )
     table.add_column("#", style="dim", width=3)
     table.add_column("Name", style="bold", min_width=12, ratio=2)
-    table.add_column("Mode", style="dim", width=7)
+    if show_details:
+        table.add_column("Mode", style="dim", width=7)
+    table.add_column("Tier", min_width=7, max_width=8)
 
-    for key in _usage_window_keys(usage_map):
+    for key in window_keys:
         spec = _spec_for_key(usage_map, key)
         table.add_column(spec["full_pct"], min_width=9, max_width=10)
         table.add_column(spec["full_left"], min_width=10, max_width=12)
+    table.add_column("Plus-Eq Left", min_width=12, max_width=12, justify="right")
     table.add_column("Credits", min_width=7, max_width=10, justify="right")
     table.add_column("Reset Expires", min_width=10, max_width=15, justify="right")
     table.add_column("", width=2)
@@ -313,9 +349,11 @@ def _render_full_table(
         row = [
             str(i),
             _profile_name_text(name, u, hidden=name in (hidden_profiles or set())),
-            mode,
         ]
-        for key in _usage_window_keys(usage_map):
+        if show_details:
+            row.append(mode)
+        row.append(_plan_label(u))
+        for key in window_keys:
             window = _get_window(u, key)
             row.extend(
                 [
@@ -323,6 +361,7 @@ def _render_full_table(
                     _fmt_time_left(window.reset_at, u.error),
                 ]
             )
+        row.append(_fmt_plus_equivalent_left(u))
         row.append(_fmt_credits(u))
         row.append(_fmt_usage_resets(u))
         row.append(_active_marker(name, active))
@@ -336,7 +375,11 @@ def _render_compact_table(
     usage_map: dict[str, UsageResult],
     active: str | None,
     hidden_profiles: set[str] | None = None,
+    show_details: bool = True,
 ) -> Table:
+    window_keys = _usage_window_keys(usage_map)
+    if not show_details:
+        window_keys = [key for key in window_keys if key != "primary_window"]
     table = Table(
         box=box.SIMPLE,
         show_header=True,
@@ -347,11 +390,14 @@ def _render_compact_table(
     )
     table.add_column("#", style="dim", width=1)
     table.add_column("Name", style="bold", min_width=6)
-    table.add_column("Md", style="dim", max_width=5)
-    for key in _usage_window_keys(usage_map):
+    if show_details:
+        table.add_column("Md", style="dim", max_width=5)
+    table.add_column("Tier", min_width=3, max_width=3)
+    for key in window_keys:
         spec = _spec_for_key(usage_map, key)
         table.add_column(spec["compact_pct"], min_width=10)
         table.add_column(spec["compact_left"], min_width=5)
+    table.add_column("Eq L", min_width=5, max_width=6, justify="right")
     table.add_column("Credits", min_width=7, max_width=10, justify="right")
     table.add_column("Reset Exp.", min_width=10, max_width=15, justify="right")
     table.add_column("", width=1)
@@ -362,9 +408,11 @@ def _render_compact_table(
         row = [
             str(i),
             _profile_name_text(name, u, hidden=name in (hidden_profiles or set())),
-            mode,
         ]
-        for key in _usage_window_keys(usage_map):
+        if show_details:
+            row.append(mode)
+        row.append(_plan_label(u, compact=True))
+        for key in window_keys:
             window = _get_window(u, key)
             row.extend(
                 [
@@ -372,6 +420,7 @@ def _render_compact_table(
                     _fmt_time_left(window.reset_at, u.error),
                 ]
             )
+        row.append(_fmt_plus_equivalent_left(u))
         row.append(_fmt_credits(u))
         row.append(_fmt_usage_resets(u))
         row.append(_active_marker(name, active))
@@ -385,9 +434,12 @@ def _render_narrow_profiles(
     usage_map: dict[str, UsageResult],
     active: str | None,
     hidden_profiles: set[str] | None = None,
+    show_details: bool = True,
 ) -> Group:
     renders: list[Text] = []
     window_keys = _usage_window_keys(usage_map)
+    if not show_details:
+        window_keys = [key for key in window_keys if key != "primary_window"]
 
     for i, name in enumerate(profiles, 1):
         u = usage_map.get(name, UsageResult(error="n/a"))
@@ -402,9 +454,14 @@ def _render_narrow_profiles(
             title.append(name, style="bold red" if _is_profile_depleted(u) else "bold")
         if name == active:
             title.append(" ●", style="green")
-        title.append(f"  {mode}", style="dim")
+        if show_details:
+            title.append(f"  {mode}", style="dim")
 
         renders.append(title)
+        tier = Text.from_markup(
+            f"[bold]{'tier':<6}[/bold] {_plan_label(u)}"
+        )
+        renders.append(tier)
         for key in window_keys:
             window = _get_window(u, key)
             label = _narrow_label(usage_map, key)
@@ -413,6 +470,10 @@ def _render_narrow_profiles(
                 f"/{_fmt_time_left_narrow(window.reset_at, u.error)}"
             )
             renders.append(usage)
+        equivalent = Text.from_markup(
+            f"[bold]{'eq left':<6}[/bold] {_fmt_plus_equivalent_left(u)}"
+        )
+        renders.append(equivalent)
         credits = Text.from_markup(
             f"[bold]{'credits':<6}[/bold] {_fmt_credits(u)}"
         )
@@ -433,21 +494,39 @@ def render_table(
     active: str | None,
     width: int | None = None,
     hidden_profiles: set[str] | None = None,
+    show_details: bool = True,
 ):
     window_count = len(_usage_window_keys(usage_map))
+    if not show_details and "primary_window" in _usage_window_keys(usage_map):
+        window_count -= 1
     narrow_threshold = 80 + max(window_count - 2, 0) * 18
-    compact_threshold = 140 + max(window_count - 2, 0) * 10
+    compact_threshold = 150 + max(window_count - 2, 0) * 10
 
     if width is not None and width < narrow_threshold:
         return _render_narrow_profiles(
-            profiles, profile_data, usage_map, active, hidden_profiles=hidden_profiles
+            profiles,
+            profile_data,
+            usage_map,
+            active,
+            hidden_profiles=hidden_profiles,
+            show_details=show_details,
         )
     if width is not None and width < compact_threshold:
         return _render_compact_table(
-            profiles, profile_data, usage_map, active, hidden_profiles=hidden_profiles
+            profiles,
+            profile_data,
+            usage_map,
+            active,
+            hidden_profiles=hidden_profiles,
+            show_details=show_details,
         )
     return _render_full_table(
-        profiles, profile_data, usage_map, active, hidden_profiles=hidden_profiles
+        profiles,
+        profile_data,
+        usage_map,
+        active,
+        hidden_profiles=hidden_profiles,
+        show_details=show_details,
     )
 
 

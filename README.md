@@ -4,7 +4,7 @@ A small CLI utility for managing multiple [OpenAI Codex](https://github.com/open
 
 ## Why
 
-Codex stores its auth token at `~/.codex/auth.json`. If you have multiple OpenAI accounts (e.g. work and personal), swapping between them means manually copying files. This tool manages that for you and shows how much of your 5-hour and weekly quota each account has used, plus how long remains until each window resets.
+Codex stores its auth token at `~/.codex/auth.json`. If you have multiple OpenAI accounts (e.g. work and personal), swapping between them means manually copying files. This tool manages that for you and shows how much of your 5-hour and weekly quota each account has used, plus how long remains until each window resets. It also identifies Plus and Pro tiers and normalizes weekly capacity into Plus-equivalent units so accounts with different subscriptions can be compared directly.
 
 This tool also can help you sync auth tokens between different computers. 
 
@@ -80,9 +80,9 @@ Or just
 ./codexauth.py
 ```
 ```
-  #  Name        Mode      5h Used        5h Left   Weekly        Weekly Left   Credits   Reset Expires
-  1  work        chatgpt   ████░ 74%      4h 12m    ████░ 74%     2d 3h            2311   10d  5h  3m  ●
-  2  personal    chatgpt   █░░░░ 12%      53m       ██░░░ 38%     5d 8h                —              —
+  #  Name        Tier      Weekly        Weekly Left   Plus-Eq Left   Credits   Reset Expires
+  1  work        Pro 20x   ████░ 74%     2d 3h               5.20      2311   10d  5h  3m  ●
+  2  personal    Plus      ██░░░ 38%     5d 8h               0.62         —              —
 
 Activate token (enter number, or q to quit): _
 ```
@@ -91,10 +91,14 @@ Activate token (enter number, or q to quit): _
 - Press Enter or `q` to exit without changing anything
 - The `●` marks the currently active profile
 
+`Plus-Eq Left` treats one complete Plus weekly allowance as `1.00`. The current
+normalization is Plus = 1x, Pro 5x ($100) = 5x, and Pro 20x ($200) = 20x. It is
+an allowance comparison, not an estimate of literal tokens remaining.
+
 Flags:
 - `--no-interactive` — print the table and exit (useful for scripting)
 - `--no-usage` — skip the API call for faster output
-- `--all` — include profiles hidden from the default list
+- `--all` — include hidden profiles and show the detailed `Mode`, `5h Used`, and `5h Left` columns
 
 Profiles can be hidden from the default list without being deleted or banned.
 Hidden preferences are synced with `push` and `pull` when `CODEXAUTH_SYNC_DIR`

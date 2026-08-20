@@ -25,6 +25,7 @@ def test_render_table_shows_usage_and_time_left_columns(monkeypatch):
             "work": UsageResult(
                 primary_pct=74,
                 secondary_pct=38,
+                plan_type="pro",
                 primary_reset_at=datetime(2026, 3, 13, 19, 16, 5, tzinfo=timezone.utc),
                 secondary_reset_at=datetime(2026, 3, 15, 18, 4, 5, tzinfo=timezone.utc),
             )
@@ -40,10 +41,40 @@ def test_render_table_shows_usage_and_time_left_columns(monkeypatch):
     assert "5h Left" in output
     assert "Weekly" in output
     assert "Weekly Left" in output
+    assert "Tier" in output
+    assert "Pro 20x" in output
+    assert "Plus-Eq Left" in output
+    assert "12.40" in output
     assert "74%" in output
     assert "38%" in output
     assert "4h 12m" in output
     assert "2d 3h" in output
+
+
+def test_render_table_shows_all_comparable_plan_tiers():
+    names = ("alice", "bob", "charlie")
+    table = render_table(
+        profiles=list(names),
+        profile_data={name: {"auth_mode": "chatgpt"} for name in names},
+        usage_map={
+            "alice": UsageResult(secondary_pct=39, plan_type="pro"),
+            "bob": UsageResult(secondary_pct=93, plan_type="prolite"),
+            "charlie": UsageResult(secondary_pct=100, plan_type="plus"),
+        },
+        active=None,
+        width=220,
+    )
+
+    console = Console(record=True, width=220)
+    console.print(table)
+    output = console.export_text()
+
+    assert "Pro 20x" in output
+    assert "12.20" in output
+    assert "Pro 5x" in output
+    assert "0.35" in output
+    assert "Plus" in output
+    assert "0.00" in output
 
 
 def test_render_table_shows_available_usage_resets_and_expirations(monkeypatch):
@@ -93,14 +124,14 @@ def test_render_table_shows_available_usage_resets_and_expirations(monkeypatch):
 
 def test_render_table_shows_rounded_credit_balance():
     table = render_table(
-        profiles=["edward", "unlimited", "none"],
+        profiles=["alice", "unlimited", "none"],
         profile_data={
-            "edward": {"auth_mode": "chatgpt"},
+            "alice": {"auth_mode": "chatgpt"},
             "unlimited": {"auth_mode": "chatgpt"},
             "none": {"auth_mode": "chatgpt"},
         },
         usage_map={
-            "edward": UsageResult(
+            "alice": UsageResult(
                 credits=UsageCredits(
                     has_credits=True,
                     unlimited=False,

@@ -1,6 +1,8 @@
 """Fetch Codex quota usage from the OpenAI API."""
 
 import asyncio
+import base64
+import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -15,6 +17,15 @@ RESET_CREDITS_TIMEOUT_SECONDS = 5
 DEFAULT_USAGE_CONCURRENCY = 8
 SHORT_WINDOW_SECONDS = 5 * 60 * 60
 WEEKLY_WINDOW_SECONDS = 7 * 24 * 60 * 60
+
+# ChatGPT's authenticated usage response currently identifies the two Pro
+# subscriptions as ``prolite`` ($100) and ``pro`` ($200). Expressing their
+# allowances relative to Plus makes percentages comparable across profiles.
+PLAN_MULTIPLIERS = {
+    "plus": 1,
+    "prolite": 5,
+    "pro": 20,
+}
 
 
 @dataclass
@@ -56,6 +67,7 @@ class UsageResult:
         reset_credits=None,
         credits=None,
         error=None,
+        plan_type=None,
     ):
         resolved_windows = dict(windows or {})
         if "primary_window" not in resolved_windows and (
@@ -78,6 +90,7 @@ class UsageResult:
         self.reset_count = reset_count
         self.reset_credits = reset_credits
         self.credits = credits
+        self.plan_type = plan_type
         self.error = error                # None | "expired" | "n/a"
 
     @property
@@ -96,6 +109,21 @@ class UsageResult:
     def secondary_reset_at(self):
         return self.windows.get("secondary_window", UsageWindow("secondary_window")).reset_at
 
+    @property
+    def plan_multiplier(self) -> int | None:
+        if not isinstance(self.plan_type, str):
+            return None
+        return PLAN_MULTIPLIERS.get(self.plan_type.lower())
+
+    @property
+    def weekly_plus_equivalent_left(self) -> float | None:
+        multiplier = self.plan_multiplier
+        weekly_pct = self.secondary_pct
+        if multiplier is None or not isinstance(weekly_pct, (int, float)):
+            return None
+        remaining_fraction = (100 - min(100, max(0, weekly_pct))) / 100
+        return multiplier * remaining_fraction
+
 
 @dataclass
 class UsageFetchSummary:
@@ -110,6 +138,39 @@ def _parse_reset_at(value):
         return datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=float(value))
     except (TypeError, ValueError, OverflowError):
         return None
+
+
+def _decode_jwt_payload(token: str) -> dict:
+    if not isinstance(token, str) or token.count(".") < 2:
+        return {}
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        decoded = json.loads(base64.urlsafe_b64decode(payload))
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def _plan_type_from_profile(profile: dict) -> str | None:
+    tokens = profile.get("tokens", {})
+    if not isinstance(tokens, dict):
+        return None
+    for token_key in ("access_token", "id_token"):
+        claims = _decode_jwt_payload(tokens.get(token_key, ""))
+        auth_claims = claims.get("https://api.openai.com/auth", {})
+        if not isinstance(auth_claims, dict):
+            continue
+        plan_type = auth_claims.get("chatgpt_plan_type")
+        if isinstance(plan_type, str) and plan_type.strip():
+            return plan_type.strip().lower()
+    return None
+
+
+def _parse_plan_type(value, profile: dict) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip().lower()
+    return _plan_type_from_profile(profile)
 
 
 def _parse_rfc3339(value):
@@ -439,6 +500,7 @@ async def fetch_usage(
                 reset_count=reset_count,
                 reset_credits=reset_credits,
                 credits=credits,
+                plan_type=_parse_plan_type(data.get("plan_type"), profile),
             ),
             refreshed,
         )

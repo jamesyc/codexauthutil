@@ -824,14 +824,46 @@ def test_list_shows_usage_reset_columns(runner, saved_profile, monkeypatch):
     monkeypatch.setattr(display_module, "datetime", FrozenDateTime)
     monkeypatch.setattr(cli_module, "fetch_all_usage", fake_fetch_all_usage)
 
-    result = runner.invoke(cli, ["list", "--no-interactive"], terminal_width=140)
+    result = runner.invoke(
+        cli, ["list", "--all", "--no-interactive"], terminal_width=140
+    )
 
     assert result.exit_code == 0
-    assert "5h Left" in result.output
+    assert "5h L" in result.output
     assert "74%" in result.output
     assert "38%" in result.output
     assert "4h 12m" in result.output
     assert "2d 3h" in result.output
+
+
+def test_list_hides_mode_and_five_hour_columns_by_default(
+    runner, saved_profile, monkeypatch
+):
+    async def fake_fetch_all_usage(profiles):
+        return usage_module.UsageFetchSummary(
+            usage_map={
+                "work": cli_module.UsageResult(
+                    primary_pct=74,
+                    secondary_pct=38,
+                    plan_type="pro",
+                )
+            },
+            refreshed_profiles=[],
+        )
+
+    monkeypatch.setattr(cli_module, "fetch_all_usage", fake_fetch_all_usage)
+
+    result = runner.invoke(
+        cli, ["list", "--no-interactive"], terminal_width=200
+    )
+
+    assert result.exit_code == 0
+    assert "Mode" not in result.output
+    assert "5h Used" not in result.output
+    assert "5h Left" not in result.output
+    assert "Weekly" in result.output
+    assert "Pro 20x" in result.output
+    assert "12.40" in result.output
 
 
 def test_list_uses_narrow_layout_on_small_terminal(runner, saved_profile, monkeypatch):
@@ -858,7 +890,9 @@ def test_list_uses_narrow_layout_on_small_terminal(runner, saved_profile, monkey
     monkeypatch.setattr(display_module, "datetime", FrozenDateTime)
     monkeypatch.setattr(cli_module, "fetch_all_usage", fake_fetch_all_usage)
 
-    result = runner.invoke(cli, ["list", "--no-interactive"], terminal_width=50)
+    result = runner.invoke(
+        cli, ["list", "--all", "--no-interactive"], terminal_width=50
+    )
 
     assert result.exit_code == 0
     assert "1. work" in result.output
@@ -894,7 +928,9 @@ def test_list_uses_compact_table_on_medium_terminal(runner, saved_profile, monke
     monkeypatch.setattr(display_module, "datetime", FrozenDateTime)
     monkeypatch.setattr(cli_module, "fetch_all_usage", fake_fetch_all_usage)
 
-    result = runner.invoke(cli, ["list", "--no-interactive"], terminal_width=90)
+    result = runner.invoke(
+        cli, ["list", "--all", "--no-interactive"], terminal_width=90
+    )
 
     assert result.exit_code == 0
     assert "Name" in result.output
