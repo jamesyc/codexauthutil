@@ -10,26 +10,31 @@ This tool also can help you sync auth tokens between different computers.
 
 ## Requirements
 
-- Python 3.10+
-- [`uv`](https://docs.astral.sh/uv/) — for direct execution without installing
+- Python 3.10+; the host development environment uses Python 3.14.
+- [`mise`](https://mise.jdx.dev/) installs Python and uv using `mise.toml`.
 
 # Installation
 
-### Option A — Run directly (no install)
+### Option A — Run from the checkout
 
 ```bash
 git clone https://github.com/jamesyc/codexauthutil
 cd codexauthutil
-chmod +x codexauth.py
-./codexauth.py --help
+mise trust
+mise install
+mise exec -- uv sync --locked
+mise exec -- uv run --locked codexauth --help
 ```
 
-`uv` automatically installs dependencies (`click`, `rich`, `httpx`) into an isolated cache on first run. Nothing is installed system-wide.
+`uv` installs the locked dependencies into `.venv` using mise's Python. The
+standalone `codexauth.py` launcher also works through
+`mise exec -- uv run --script codexauth.py --help`, but uses its inline dependencies
+instead of the project lockfile.
 
 ### Option B — Install as a shell command
 
 ```bash
-pip install -e .
+mise exec -- uv tool install --editable .
 codexauth --help
 ```
 
@@ -289,5 +294,6 @@ The tool treats inode preservation as a compatibility property for existing auth
 ## Running tests
 
 ```bash
-uv run --with "pytest,pytest-asyncio,respx" pytest tests/ -v
+mise exec -- uv sync --locked --extra test
+mise exec -- uv run --locked --extra test pytest tests/ -v
 ```
