@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from codexauth import store
+from codexauth.credentials import CredentialComparison, compare_credentials
 from codexauth.store import ProfileNotFoundError
 
 HIDDEN_SYNC_FILE = "hidden"
@@ -21,11 +22,11 @@ class SyncCandidate:
     dest_modified: datetime | None
 
     @property
-    def should_confirm_overwrite(self) -> bool:
-        return (
-            self.dest_modified is not None
-            and self.source_modified < self.dest_modified
-        )
+    def comparison(self) -> CredentialComparison:
+        source = read_profile(self.source_path)
+        if not self.dest_path.exists():
+            return CredentialComparison("source", "The destination profile is missing.")
+        return compare_credentials(source, read_profile(self.dest_path))
 
 
 def profile_path(name: str) -> Path:
@@ -42,9 +43,13 @@ def list_blacklisted_profiles(sync_dir: Path) -> list[str]:
     gitignore_path = sync_dir / ".gitignore"
     if not gitignore_path.exists():
         return []
+    return parse_blacklisted_profiles(gitignore_path.read_text())
 
+
+def parse_blacklisted_profiles(contents: str) -> list[str]:
+    """Read explicit profile bans from a working file or a Git version of .gitignore."""
     blacklisted: set[str] = set()
-    for raw_line in gitignore_path.read_text().splitlines():
+    for raw_line in contents.splitlines():
         entry = raw_line.strip()
         if not entry or entry.startswith("#") or entry.startswith("!"):
             continue
@@ -101,7 +106,10 @@ def build_export_candidates(sync_dir: Path) -> list[SyncCandidate]:
 
 
 def read_profile(path: Path) -> dict:
-    return json.loads(path.read_text())
+    profile = json.loads(path.read_text())
+    if not isinstance(profile, dict):
+        raise ValueError(f"Profile {path.name} must contain a JSON object.")
+    return profile
 
 
 def import_profile(name: str, source_path: Path):

@@ -327,7 +327,7 @@ def test_render_table_uses_compact_table_on_medium_width(monkeypatch):
     assert "2d 3h" in output
 
 
-def test_render_table_shows_spark_window_when_present(monkeypatch):
+def test_render_table_shows_spark_window_with_details(monkeypatch):
     class FrozenDateTime(datetime):
         @classmethod
         def now(cls, tz=None):
@@ -382,6 +382,46 @@ def test_render_table_shows_spark_window_when_present(monkeypatch):
     assert "Spark Weekly" in output
     assert "12%" in output
     assert "1h 30m" in output
+
+
+def test_render_table_hides_all_spark_windows_without_details():
+    table = render_table(
+        profiles=["work"],
+        profile_data={"work": {"auth_mode": "chatgpt"}},
+        usage_map={
+            "work": UsageResult(
+                windows={
+                    "secondary_window": UsageWindow(
+                        key="secondary_window",
+                        used_pct=38,
+                    ),
+                    "additional_gpt_5_3_codex_spark_primary_window": UsageWindow(
+                        key="additional_gpt_5_3_codex_spark_primary_window",
+                        used_pct=12,
+                        label="GPT-5.3-Codex-Spark",
+                    ),
+                    "additional_custom_secondary_window": UsageWindow(
+                        key="additional_custom_secondary_window",
+                        used_pct=9,
+                        label="GPT-5.3-Codex-Spark Weekly",
+                    ),
+                }
+            )
+        },
+        active=None,
+        width=260,
+        show_details=False,
+    )
+
+    console = Console(record=True, width=260)
+    console.print(table)
+    output = console.export_text()
+
+    assert "Weekly" in output
+    assert "38%" in output
+    assert "Spark" not in output
+    assert "12%" not in output
+    assert "9%" not in output
 
 
 def test_render_table_shows_weekly_only_usage_in_weekly_columns(monkeypatch):

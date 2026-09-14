@@ -37,6 +37,7 @@ def test_reconcile_active_to_store_updates_matching_profile():
     store_module.save_codex_auth(_profile(account_id="acct-1"))
     auth_data = _profile(account_id="acct-1")
     auth_data["tokens"]["access_token"] = "new-access"
+    auth_data["last_refresh"] = "2025-01-02T00:00:00+00:00"
     store_module.save_codex_auth(auth_data)
 
     result = reconcile_active_to_store()
@@ -50,6 +51,7 @@ def test_reconcile_active_to_store_uses_iss_sub_when_account_missing():
     store_module.set_active("work")
     auth_data = _profile(account_id=None)
     auth_data["tokens"]["access_token"] = "new-access"
+    auth_data["last_refresh"] = "2025-01-02T00:00:00+00:00"
     store_module.save_codex_auth(auth_data)
 
     result = reconcile_active_to_store()
@@ -96,6 +98,7 @@ def test_reconcile_imported_active_profile_updates_auth_from_newer_store():
 
     auth = _profile(account_id="acct-1")
     auth["tokens"]["access_token"] = "old-access"
+    auth["last_refresh"] = "2024-12-31T00:00:00+00:00"
     store_module.save_codex_auth(auth)
     os.utime(store_module.CODEX_AUTH, (1_600_000_000, 1_600_000_000))
 
@@ -125,7 +128,7 @@ def test_reconcile_imported_active_profile_prompts_when_ambiguous(monkeypatch):
     assert store_module.load_profile("work")["tokens"]["access_token"] == "local-access"
 
 
-def test_reconcile_imported_active_profile_prompts_when_recency_signals_disagree(monkeypatch):
+def test_reconcile_imported_active_profile_ignores_mtime_when_credentials_are_newer(monkeypatch):
     store_profile = _profile(account_id="acct-1")
     store_profile["last_refresh"] = "2025-01-03T00:00:00+00:00"
     store_module.save_profile("work", store_profile)
@@ -139,9 +142,26 @@ def test_reconcile_imported_active_profile_prompts_when_recency_signals_disagree
     store_module.save_codex_auth(auth)
     os.utime(store_module.CODEX_AUTH, (1_700_000_000, 1_700_000_000))
 
-    monkeypatch.setattr(click, "prompt", lambda *args, **kwargs: "store")
+    monkeypatch.setattr(click, "prompt", lambda *args, **kwargs: pytest.fail("mtime must not override credential freshness"))
 
     result = reconcile_imported_active_profile({"work"})
 
     assert result.status == "updated"
     assert json.loads(store_module.CODEX_AUTH.read_text())["tokens"]["access_token"] == "access"
+
+
+def test_noninteractive_reconciliation_preserves_ambiguous_credentials(monkeypatch):
+    stored = _profile()
+    auth = _profile()
+    auth["tokens"]["refresh_token"] = "other-refresh"
+    store_module.save_profile("work", stored)
+    store_module.set_active("work")
+    store_module.save_codex_auth(auth)
+    os.utime(store_module.TOKENS_DIR / "work.json", (1_600_000_000,) * 2)
+    monkeypatch.setattr(click, "prompt", lambda *args, **kwargs: pytest.fail("must not prompt"))
+
+    result = reconcile_active_to_store(prompt_on_unsafe=False)
+
+    assert result.status == "unsafe"
+    assert store_module.load_profile("work") == stored
+    assert json.loads(store_module.CODEX_AUTH.read_text()) == auth

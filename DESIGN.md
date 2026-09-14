@@ -19,12 +19,12 @@ The project is intentionally lightweight. It is a local tool, not a service, and
 - Surface usage information and reset countdowns in a human-friendly terminal view.
 - Refresh ChatGPT OAuth tokens automatically when they are stale.
 - Support bootstrapping a new ChatGPT-backed profile through a manual browser OAuth flow.
-- Support pull/push sync against a shared profile folder defined in a `.env` file.
+- Automatically sync credentials against a shared Git profile folder defined in a `.env` file.
 - Keep the implementation easy to understand and maintain.
 
 ## Non-Goals
 
-- Managing remote state or syncing profiles across machines.
+- Running a separate background service or daemon.
 - Supporting a database-backed storage system.
 - Providing deep account management beyond auth file switching and usage lookup.
 - Automating browser login or embedding a browser UI inside the CLI.
@@ -33,11 +33,11 @@ The project is intentionally lightweight. It is a local tool, not a service, and
 
 1. A user saves their current `~/.codex/auth.json` as `work`.
 2. The user later saves a different account as `personal`.
-3. The user runs `codexauth list` to see available profiles and current usage.
+3. The user runs `codexauth` to sync accounts and see available profiles and current usage.
 4. The user runs `codexauth use personal` to switch the active profile.
 5. The tool copies the selected profile into `~/.codex/auth.json` and marks it active.
-6. The user runs `codexauth pull` to import profiles from a shared Git-backed folder configured in `.env`.
-7. The user runs `codexauth push` to export local profiles and publish them from that same folder.
+6. The user runs `codexauth watch` to keep syncing accounts and updating the usage table every 10 seconds.
+7. The user runs `codexauth sync` for a single sync pass without a usage table.
 8. The user runs `codexauth login` to generate a login URL for a new profile. The user pastes that URL into a browser, logs in, and reaches a localhost redirect that is expected to fail. The user copies the full callback URL from the browser address bar back into the CLI. The tool exchanges the authorization code for tokens and saves the result as a normal profile.
 
 ## High-Level Architecture
@@ -52,7 +52,10 @@ The system is organized into a few focused modules:
 - `codexauth/refresh.py`: Refresh-token handling for ChatGPT OAuth credentials.
 - `codexauth/oauth.py`: manual OAuth bootstrap helpers, callback validation, and code exchange.
 - `codexauth/display.py`: Rich-based table rendering and interactive prompt behavior.
-- `codexauth/sync.py`: import/export candidate discovery, modified-time formatting, and metadata-preserving file copies.
+- `codexauth/sync.py`: import/export candidate discovery and metadata-preserving file copies.
+- `codexauth/credentials.py`: shared account-identity and credential-timestamp comparison for sync and active reconciliation.
+- `codexauth/autosync.py`: unattended bidirectional sync, semantic Git integration, retries, and hidden-preference merging.
+- `codexauth/locking.py`: a reentrant local process lock shared by sync commands.
 
 This separation keeps side effects contained:
 
@@ -101,25 +104,56 @@ the matching local stored profile should be considered disallowed.
 
 ## Command Design
 
+### `codexauth` (no command)
+
+- Syncs automatically when `CODEXAUTH_SYNC_DIR` is configured, then loads profiles, fetches usage, and shows the normal table with activation options.
+- Without sync configuration, shows local profiles normally. Sync failures or skipped profiles are reported without preventing display or activation.
+- If usage lookup refreshes tokens or preflight reconciliation catches another local update after a successful sync, publishes those changes automatically while the table stays visible, before offering activation.
+- Never prompts to sync. When the initial sync fails, avoids another immediate attempt after usage lookup; the next invocation or watch cycle retries.
+
+### `codexauth sync`
+
+- Standalone sync command for a pass without a usage table; `pull` and `push` remain hidden compatibility commands.
+- Runs one noninteractive pass. Continuous operation belongs to `watch`; `sync` has no watch or interval options.
+- Fetches the configured upstream branch, compares complete credential versions, merges local and external profiles, updates the active account, and publishes managed changes.
+- Skips ambiguous or invalid local/external pairs and reports each profile without prompting. Other profiles can still sync.
+- Returns exit code 0 for a complete pass, 2 for skipped profiles, and 1 for a failed pass.
+- Holds a cross-process local lock for each pass; legacy sync commands share it. The lock releases on normal exit, interruption, or process termination.
+- Git uses noninteractive authentication and bounded execution time. Rejected pushes and transient fetch/push errors retry up to three times with fresh comparisons and short backoff.
+- Stages only profile JSON, `hidden`, and `.gitignore` in the configured directory, respecting literal filenames and preserving unrelated user changes.
+- Refuses pre-existing merge/rebase state or unrelated staged changes. Credential Git conflicts are resolved by the shared comparison, replacing entire files even if Git could text-merge individual fields.
+- Ambiguous Git versions stop the pass before a merge is started. Other unresolved Git conflicts abort only the merge started by this pass. Automatic display flows report the condition alongside the local table.
+- Rechecks local profile and active-auth content after publication and retries if they changed.
+- Merges hidden preferences against the last agreed state; stores this local state atomically under `~/.codexauth/sync-state/`. With no prior state, hidden preferences from either side are retained.
+- Applies explicit `.gitignore` profile bans to the local store. File absence alone is not a deletion instruction.
+- Checks bans from both Git branches before comparing credential blobs. Blacklisted tracked files use normal Git integration, with unresolved conflicts still stopping the pass. Identical Git blobs need no credential comparison, so an unchanged unsupported historical profile cannot block other accounts.
+
 ### `codexauth list`
 
-- Lists all stored profiles.
+- Lists local profiles without an automatic sync first.
 - Optionally fetches usage data unless `--no-usage` is passed.
 - Shows the current active profile in a width-aware Rich view.
-- For ChatGPT-backed profiles with live usage data, shows four quota-window columns:
-  - 5-hour usage percentage
-  - time left until the 5-hour window resets
-  - weekly usage percentage
-  - time left until the weekly window resets
+- For ChatGPT-backed profiles with live usage data, the default view shows weekly usage and time left.
+- `--all` adds the 5-hour usage and time-left columns, plus all Spark usage and time-left columns returned by the API.
 - Shows the compact time remaining before each available earned usage-limit reset expires (for example, `10d  5h  3m`) in a right-aligned column with fixed day/hour/minute positions, without displaying the available count.
 - Shows ChatGPT credits in a separate right-aligned column, rounding finite balances to the nearest whole credit to match Codex's status display and preserving `Unlimited`, `Available`, unavailable, and lookup-error states.
 - Uses the default text color for reset expirations beyond seven days, yellow for seven days or less, and red for one day or less.
 - Uses the full multi-column table on wide terminals, a compact table on medium widths, and a stacked per-profile layout on narrow screens so phone-sized terminals remain readable.
 - Can prompt the user to activate a profile interactively unless `--no-interactive` is passed.
-- Excludes hidden profiles by default. `--all` includes hidden profiles and
-  labels them as hidden. Hidden profiles remain stored, activatable, and
+- Excludes hidden profiles by default. `--all` includes hidden profiles,
+  labels them as hidden, and shows the detailed Mode, 5-hour, and Spark columns. Hidden profiles remain stored, activatable, and
   exported/imported; hiding is a list-view preference stored in
   `~/.codexauth/hidden` and synced as `<CODEXAUTH_SYNC_DIR>/hidden`.
+
+### `codexauth watch`
+
+- Syncs and checks usage for all profiles, including hidden profiles, immediately and every 10 seconds. `--interval` accepts a positive number of seconds to override the cadence.
+- Uses the same automatic sync and token-publication flow as the default command, with no activation or sync prompts.
+- Includes sync time and usage lookup time in each cycle; slow cycles finish before another starts.
+- Keeps the previous table visible while sync and usage work completes, then sends the screen clear and complete replacement snapshot in one buffered write. Sync messages are captured with the snapshot; there is no fetching spinner.
+- Reports sync failures alongside local usage and attempts sync again on the next cycle. Missing sync configuration simply skips syncing.
+- Keeps polling an empty store, reloads profiles after sync on every cycle, and stops cleanly on Ctrl+C during sync, lookup, or waiting.
+- Redirected output retains each timestamped snapshot.
 
 ### `codexauth add <name>`
 
@@ -190,7 +224,7 @@ the matching local stored profile should be considered disallowed.
 - Reads the external profile directory path from `.env`.
 - Imports all available external profiles by default.
 - Detects name collisions with locally stored profiles.
-- When an import would overwrite an existing local profile, shows both sides' last modified timestamps before confirmation.
+- Automatically imports newer credentials for matching accounts, skips identical or older incoming copies, and prompts for ambiguous comparisons.
 
 ### `codexauth export`
 
@@ -198,20 +232,20 @@ the matching local stored profile should be considered disallowed.
 - Reads the external profile directory path from `.env`.
 - Exports all available local profiles by default.
 - Detects name collisions with profiles already present in the external directory.
-- When an export would overwrite an existing external profile, shows both sides' last modified timestamps before confirmation.
+- Automatically exports newer credentials for matching accounts, skips identical or older local copies, and prompts for ambiguous comparisons.
 
-### `codexauth pull`
+### `codexauth pull` (legacy)
 
 - Reads the external profile directory path from `.env`.
 - Treats that directory as a Git working tree used to fetch remote profile changes.
 - Changes into the sync directory and runs `git pull`.
 - Imports all profiles from the sync directory after a successful pull.
-- Prompts only for overwrite cases during the import step.
+- Prompts only when account identity or credential freshness is ambiguous during import.
 
-### `codexauth push`
+### `codexauth push` (legacy)
 
 - Reads the external profile directory path from `.env`.
-- Exports all local profiles into the sync directory first.
+- Reconciles the active account, pulls the sync repo, imports newer external credentials, then exports newer local credentials.
 - Treats that directory as a Git working tree used to publish exported profiles.
 - Changes into the sync directory and runs `git add .`.
 - Creates a commit with a default message describing the exported-profile update.
@@ -264,14 +298,11 @@ reconciliation first, refresh second, then render the list.
 Identity matching should be conservative to avoid accidentally writing one
 account over another. A reasonable baseline is:
 
-- if present on both sides, `tokens.account_id` is authoritative and must match
-- if `tokens.account_id` is missing on either side, `(iss, sub)` from
-  `id_token` may be used as a backup identity check, and both fields must match
+- account IDs from `tokens.account_id` and embedded ChatGPT account claims must agree wherever present
+- `(iss, sub)` from `id_token` must also agree when available on both sides
+- matching account IDs or matching ID-token identity may confirm identity when the other signal is missing
 
-If an overwrite sees that both `tokens.account_id` and `(iss, sub)` from
-`id_token` disagree, the tool should surface the update and ask the user to
-confirm before replacing the saved profile; otherwise it can be an automatic
-update. When identity cannot be confirmed, the tool should not auto-overwrite.
+If any available identity signals disagree, the tool asks before replacing the saved profile. Matching identities permit automatic comparison of credential timestamps. When identity cannot be confirmed, the tool should not auto-overwrite.
 Instead it should surface a clear warning and require an explicit command to
 reconcile.
 
@@ -292,12 +323,9 @@ We also have to handle external refreshes for the `pull` command:
    imported `~/.codexauth/tokens/<active>.json` with local `~/.codex/auth.json`.
    If identity matches, automatically update the older copy to match the newer
    one:
-   - if `tokens.account_id` is present on both sides and matches, treat that as
-     authoritative
-   - otherwise, if `(iss, sub)` from `id_token` is present on both sides and
-     matches, treat that as a match
-   - if modified times are equal but contents differ, do not guess which side is
-     newer; require confirmation instead
+   - require matching account identity with no conflicting user or account identifiers
+   - compare token issue times and `last_refresh`, ignoring filesystem timestamps
+   - require confirmation when comparable credential timestamps disagree, or when they are equal or missing despite different contents
 
 5. If identity does not match, or cannot be confirmed from the available
    fields, do not auto-overwrite. Surface a warning and require the user to
@@ -333,7 +361,7 @@ All writes should preserve existing file permissions (`0600`) and update mtime,
 because the stored profile contents genuinely changed.
 
 Reconciliation should also be a strict no-op when the two copies are already
-byte-identical. In that case, the tool should not rewrite either file and
+equal as parsed JSON. In that case, the tool should not rewrite either file and
 should not change mtime. This avoids churn after a `pull` updates the active
 local state and a later `list` or `use` checks the same profile again.
 
@@ -415,7 +443,7 @@ Usage lookup is only attempted for ChatGPT-backed profiles. For each eligible pr
 5. Extract the standard primary and secondary usage windows from the top-level `rate_limit` object.
 6. Extract any named additional limits from `additional_rate_limits[]`, preserving each entry's `limit_name`.
 7. Read `rate_limit_reset_credits.available_count` from the usage response as a fallback, then prefer the detailed reset-credit response when available so each available credit's expiration can be shown.
-8. Apply presentation-friendly labels in the renderer where needed; for example, the UI shortens `GPT-5.3-Codex-Spark` to `Spark` and `GPT-5.3-Codex-Spark Weekly` to `Spark Weekly`.
+8. With `--all`, apply presentation-friendly labels to named limits in the renderer; for example, shorten `GPT-5.3-Codex-Spark` to `Spark` and `GPT-5.3-Codex-Spark Weekly` to `Spark Weekly`. Hide all Spark columns in the default view.
 
 Reset-credit details are read-only in this utility. Available credits are sorted by expiration, credits with no expiration are shown last, and a detail-request failure does not discard a count successfully returned by the usage endpoint.
 
@@ -461,7 +489,7 @@ This keeps configuration simple and avoids adding another persistent config syst
 2. Enumerate candidate `*.json` files in that directory.
 3. Compare them against local profiles by profile name.
 4. For profiles that do not exist locally, import directly.
-5. For profiles that already exist locally, show local and external modified times and ask whether to overwrite.
+5. For existing profiles, compare account identity and credential timestamps. Import a clearly newer source, skip an identical or older source, and prompt only for ambiguity.
 6. Copy accepted profiles into `~/.codexauth/tokens`.
 7. Preserve the source file's modified timestamp on the imported local copy.
 8. If the sync directory's `.gitignore` blacklists a profile JSON file, treat
@@ -472,9 +500,9 @@ This keeps configuration simple and avoids adding another persistent config syst
 
 Key UX requirement:
 
-- overwrites should be explicit, not silent
-- the user should be able to skip individual conflicting profiles
-- modified timestamps should help the user decide which copy is newer
+- report automatic updates and skipped older or identical credentials
+- allow the user to skip individual ambiguous profiles
+- show credential dates and file timestamps as context for unresolved comparisons
 
 ### Export Flow
 
@@ -482,7 +510,7 @@ Key UX requirement:
 2. Enumerate local stored profiles.
 3. Compare them against files already present in the external directory.
 4. For profiles that do not exist externally, export directly.
-5. For profiles that already exist externally, show local and external modified times and ask whether to overwrite.
+5. For existing external profiles, use the same credential comparison as import. Export newer local credentials, skip identical or older copies, and prompt for ambiguity.
 6. Copy accepted profiles into the external directory.
 7. Preserve the source file's modified timestamp on the exported copy.
 
@@ -515,8 +543,7 @@ The pull command should behave as follows:
 9. For any imported profile that is currently active locally, reconcile the
    imported stored copy against `~/.codex/auth.json` before deciding whether one
    copy should replace the other.
-10. Prompt only for overwrite cases during import or for reconciliation cases
-   where identity cannot be safely confirmed or recency is ambiguous.
+10. Prompt only when identity cannot be confirmed or credential freshness is ambiguous, during import or active reconciliation.
 11. Print a success message summarizing what happened.
 
 ### Push Flow
@@ -524,16 +551,17 @@ The pull command should behave as follows:
 The push command should behave as follows:
 
 1. Read the external profile directory from `.env`.
-2. Export all local profiles into the sync directory.
-3. Export the local hidden profile preference to `<CODEXAUTH_SYNC_DIR>/hidden`.
-4. Fail with a clear error if the directory does not exist.
-5. Fail with a clear error if the directory is not inside a Git working tree.
-6. Run `git add .` from that directory.
-7. Check whether staging produced any changes.
-8. If there are no staged changes, print a no-op message and stop without committing or pushing.
-9. If there are staged changes, run `git commit -m <message>`.
-10. Run `git push`.
-11. Print a success message summarizing what happened.
+2. Fail with a clear error if the directory does not exist.
+3. Fail with a clear error if the directory is not inside a Git working tree.
+4. Reconcile the active account, then run `git pull` before writing profile files in the sync repo. This makes unfinished merges and conflicting working-tree changes fail before export can overwrite or stage them.
+5. Import new external profiles and clearly newer external credentials, reconcile any imported active account, then export newer local credentials. Preserve local hidden preferences during this merge and skip blacklisted profiles. Ambiguous comparisons prompt once during export.
+6. Export the local hidden profile preference to `<CODEXAUTH_SYNC_DIR>/hidden`.
+7. Run `git add .` from that directory.
+8. Check whether staging produced any changes.
+9. If there are staged changes, run `git commit -m <message>`, followed by another `git pull` to integrate an update published during the export/commit window.
+10. If there are no staged changes, skip the commit and report the no-op.
+11. Run `git push` in either case so an existing ahead commit is not stranded.
+12. Print a success message summarizing what happened.
 
 ### Commit Message Strategy
 
@@ -580,13 +608,13 @@ This may happen because of:
 - local working tree changes preventing pull
 - remote branch or tracking configuration problems
 
-The design should not attempt to resolve conflicts or modify the repository state automatically.
+Legacy pull/push commands surface Git conflicts. The primary sync command resolves clearly ordered credential versions in full and three-way merges hidden preferences. Ambiguous Git versions or other unresolved conflicts stop the pass; only a merge started by that pass may be aborted automatically.
 
 #### Pull succeeds but import is partially declined
 
-After a successful `git pull`, the subsequent import step may still hit overwrite prompts. Users may accept some overwrites and decline others, producing a partial local update.
+After a successful `git pull`, ambiguous credential comparisons may still need a choice. Users may accept some replacements and decline others, producing a partial local update.
 
-This is acceptable because overwrite confirmation is more important than forcing the local store to mirror the sync directory exactly.
+Unresolved comparisons remain untouched by default; older credentials are never automatically copied over newer ones.
 
 #### Pull sees concurrent drift on both sides
 
@@ -606,7 +634,7 @@ file afterward when identity checks pass.
 
 #### No exported changes
 
-If `git add .` is successful but there is nothing to commit, the command should not treat that as an error. It should print a message such as "No changes to commit" and exit successfully without calling `git push`.
+If `git add .` is successful but there is nothing to commit, the command should not treat that as an error. It should print a message such as "No changes to commit", skip `git commit`, and still call `git push` in case a previous publication attempt left the local branch ahead of its remote.
 
 This case matters because users may routinely run:
 
@@ -696,6 +724,7 @@ Tests for the Git sync features should cover:
 - successful `git pull`
 - failed `git pull`
 - successful no-op publish when there are no changes
+- preflight pull failure stopping before export
 - successful `add` -> `commit` -> `push` flow
 - commit failure stopping before push
 - push failure surfacing an error after a successful commit
@@ -705,7 +734,7 @@ These tests can mock subprocess execution rather than requiring a real remote re
 
 ### Modified Time Semantics
 
-The implementation uses file modified time as a lightweight signal for profile provenance during sync decisions, so operations intentionally do not all behave the same way:
+File modified times are preserved for provenance and shown as context in unresolved conflicts. They never choose the newer credential set, because Git checkouts and file copies can change them. Operations intentionally do not all behave the same way:
 
 - `add` preserves the source file's modified time, whether the source is `--file` or the default `~/.codex/auth.json`
 - `import` preserves the external source file's modified time
@@ -715,7 +744,7 @@ The implementation uses file modified time as a lightweight signal for profile p
 - `activate` preserves the selected profile's modified time when writing `~/.codex/auth.json`
 - `save_codex_auth` writes generated local JSON and therefore uses a fresh modified time on `~/.codex/auth.json`
 
-This gives import/export flows stable timestamps while still allowing local token refreshes to indicate a real local update.
+Credential freshness is determined separately using the shared credential comparison described below.
 
 ### Inode Preservation Semantics
 
@@ -728,28 +757,38 @@ For existing files, auth/profile updates should be expressed as in-place overwri
 
 This is primarily a semantics guarantee and documentation point, not a requirement for temp-file swap logic.
 
-### Overwrite Decision Model
+### Credential Merge Decision Model
 
-For both import and export, the tool should surface enough metadata to support a safe overwrite choice:
+Sync and active-account reconciliation share one comparison:
 
-- profile name
-- source modified timestamp
-- destination modified timestamp
-- whether the destination already exists
+1. Identical parsed JSON is a no-op; neither file is rewritten.
+2. Different API-key profiles or incomplete credentials require a choice.
+3. Account identifiers must agree, including available embedded ChatGPT account claims.
+   ID-token issuer and subject must also agree when comparable. Matching account IDs or
+   matching ID-token identity can confirm identity when the other signal is missing.
+4. Compare access-token `iat`, ID-token `iat`, and timezone-aware `last_refresh` values
+   where the same field is available on both sides. Equal fields do not break ties.
+5. If all unequal comparable fields point to the same winner, copy its complete profile.
+   Access, refresh, and ID tokens must remain together; never merge individual token fields.
+6. Missing or equal timestamps with different contents, conflicting freshness signals,
+   or unconfirmed identities require a choice. Filesystem timestamps never break the tie.
 
-This allows prompts such as:
+JWT claims are local comparison metadata, not signature or validity checks. Comparing
+profiles does not contact the authentication service or rotate credentials. Prompts show
+only credential timestamps and file dates, never raw token values.
 
-- import `work` from external store modified at `2026-03-10 09:15` over local copy modified at `2026-03-08 18:42`?
-- export `personal` from local store modified at `2026-03-12 07:30` over external copy modified at `2026-03-01 14:05`?
-
-The exact prompt format can vary, but the timestamps should be shown whenever overwriting is possible.
+`pull` imports newer external credentials and keeps newer local copies. `push` imports
+new external profiles and newer external credentials before exporting newer local ones,
+so both stores converge when comparisons are clear. Local hidden-profile preferences are
+preserved during the push merge. Both flows reconcile the active account using the same
+credential policy; noninteractive reconciliation reports ambiguity without prompting.
 
 ### Bulk Default UX
 
 Import and export now follow a bulk-by-default workflow:
 
 - all discovered candidates are processed automatically
-- only overwrite cases prompt the user
+- unattended sync reports and skips ambiguous comparisons; legacy commands can prompt for a manual choice
 - non-conflicting profiles copy immediately
 - conflicting profiles can still be skipped individually
 
@@ -790,9 +829,11 @@ The user interface is optimized for quick local use:
 - Rich renders a readable profile view with color and compact usage bars.
 - `list` prints the current datetime immediately above the rendered profile view.
 - The default `list` flow doubles as a launcher by offering an interactive activation prompt.
+- Running without a command syncs before showing the table. `watch` combines repeated sync and usage checks, keeping the last table visible during refreshes.
+- Both automatic flows publish tokens refreshed by usage lookup after a successful initial sync, without a confirmation prompt.
 - When `list` updates local store state, either by reconciling the active
   `auth.json` back into store or by refreshing stale stored tokens during usage
-  lookup, it should offer a follow-up `push` when sync is configured and the
+  lookup, it should offer a follow-up `sync` when sync is configured and the
   command is interactive.
 - The list display is responsive to terminal width: wide terminals keep the full table, medium terminals collapse to a compact table, and narrow terminals switch to a stacked format that remains usable on phone-width screens.
 
@@ -827,7 +868,7 @@ The project uses a forgiving model:
 - CLI commands translate failures into user-facing `ClickException`s where appropriate
 - refresh and usage networking failures fall back to unchanged profiles or `N/A` usage states
 - import/export configuration errors should produce clear setup guidance rather than stack traces
-- overwrite situations should be handled through confirmation instead of implicit replacement
+- clearly newer credentials for the same account merge automatically; unattended sync skips ambiguity, while legacy commands can request confirmation
 
 This keeps the tool useful even when network calls fail or remote APIs return unexpected errors.
 
@@ -839,6 +880,12 @@ The existing test suite covers the main functional layers:
 - profile persistence and activation behavior
 - modified-time preservation for `add`, `import`, and `export`
 - modified-time updates for token refresh saves
+- credential ordering independent of file times, conflicting or missing dates, and account-identity mismatches
+- merging newer credentials in both directions before publication and updating active auth
+- real temporary Git repositories covering rejected pushes, divergent token histories, hidden preferences, and unrelated user changes
+- cross-process sync exclusion, noninteractive Git calls, bounded retries, and background-loop recovery
+- automatic sync before default/watch usage lookups, publication of refreshed tokens, and local display after sync failures
+- polling cadence including sync duration, newly synced accounts in empty stores, and buffered display during sync and lookup interruptions
 - token refresh decision logic
 - usage fetch success and failure cases
 - usage batch concurrency limits and shared-client reuse
