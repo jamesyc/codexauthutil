@@ -17,8 +17,17 @@ class GitCommandError(Exception):
 
     @property
     def message(self) -> str:
-        details = self.stderr or self.stdout or "git command failed"
+        details = _combined_output(self.stdout, self.stderr) or "git command failed"
         return f"{' '.join(self.command)} failed: {details}"
+
+
+def _combined_output(stdout: str = "", stderr: str = "") -> str:
+    """Return all useful Git output without repeating identical streams."""
+    parts: list[str] = []
+    for value in (stderr.strip(), stdout.strip()):
+        if value and value not in parts:
+            parts.append(value)
+    return "\n".join(parts)
 
 
 def _run_git(sync_dir: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -44,7 +53,7 @@ def ensure_git_repo(sync_dir: Path) -> None:
 def pull_sync_repo(sync_dir: Path) -> str:
     ensure_git_repo(sync_dir)
     result = _run_git(sync_dir, "pull", "--no-rebase", "--no-edit")
-    return (result.stdout or result.stderr).strip() or "Already up to date."
+    return _combined_output(result.stdout, result.stderr) or "Already up to date."
 
 
 def push_sync_repo(sync_dir: Path, message: str = "Update exported codexauth profiles") -> str:
@@ -57,16 +66,21 @@ def push_sync_repo(sync_dir: Path, message: str = "Update exported codexauth pro
         text=True,
         check=False,
     )
-    if diff.returncode == 0:
-        return "No changes to commit."
-    if diff.returncode != 1:
+    committed = diff.returncode == 1
+    if diff.returncode not in {0, 1}:
         raise GitCommandError(
             ["git", "diff", "--cached", "--quiet"],
             stderr=diff.stderr,
             stdout=diff.stdout,
         )
 
-    _run_git(sync_dir, "commit", "-m", message)
-    _run_git(sync_dir, "pull", "--no-rebase", "--no-edit")
+    if committed:
+        _run_git(sync_dir, "commit", "-m", message)
+        # Close the small race between the pre-export pull and publication.
+        _run_git(sync_dir, "pull", "--no-rebase", "--no-edit")
+
     result = _run_git(sync_dir, "push")
-    return (result.stdout or result.stderr).strip() or "Pushed changes."
+    output = _combined_output(result.stdout, result.stderr) or "Pushed changes."
+    if not committed:
+        return f"No changes to commit.\n{output}"
+    return output

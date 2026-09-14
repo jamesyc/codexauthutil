@@ -273,6 +273,33 @@ def _usage_window_keys(usage_map: dict[str, UsageResult]) -> list[str]:
     return ordered_keys + spark_keys + sorted(other_keys)
 
 
+def _is_spark_window(usage_map: dict[str, UsageResult], key: str) -> bool:
+    if "spark" in key.lower():
+        return True
+    for usage in usage_map.values():
+        window = usage.windows.get(key)
+        if (
+            window is not None
+            and isinstance(window.label, str)
+            and "spark" in window.label.lower()
+        ):
+            return True
+    return False
+
+
+def _visible_window_keys(
+    usage_map: dict[str, UsageResult], *, show_details: bool
+) -> list[str]:
+    keys = _usage_window_keys(usage_map)
+    if show_details:
+        return keys
+    return [
+        key
+        for key in keys
+        if key != "primary_window" and not _is_spark_window(usage_map, key)
+    ]
+
+
 def _get_window(usage: UsageResult, key: str) -> UsageWindow:
     return usage.windows.get(key, UsageWindow(key=key))
 
@@ -317,9 +344,7 @@ def _render_full_table(
     hidden_profiles: set[str] | None = None,
     show_details: bool = True,
 ) -> Table:
-    window_keys = _usage_window_keys(usage_map)
-    if not show_details:
-        window_keys = [key for key in window_keys if key != "primary_window"]
+    window_keys = _visible_window_keys(usage_map, show_details=show_details)
     table = Table(
         box=box.SIMPLE,
         show_header=True,
@@ -377,9 +402,7 @@ def _render_compact_table(
     hidden_profiles: set[str] | None = None,
     show_details: bool = True,
 ) -> Table:
-    window_keys = _usage_window_keys(usage_map)
-    if not show_details:
-        window_keys = [key for key in window_keys if key != "primary_window"]
+    window_keys = _visible_window_keys(usage_map, show_details=show_details)
     table = Table(
         box=box.SIMPLE,
         show_header=True,
@@ -437,9 +460,7 @@ def _render_narrow_profiles(
     show_details: bool = True,
 ) -> Group:
     renders: list[Text] = []
-    window_keys = _usage_window_keys(usage_map)
-    if not show_details:
-        window_keys = [key for key in window_keys if key != "primary_window"]
+    window_keys = _visible_window_keys(usage_map, show_details=show_details)
 
     for i, name in enumerate(profiles, 1):
         u = usage_map.get(name, UsageResult(error="n/a"))
@@ -496,9 +517,7 @@ def render_table(
     hidden_profiles: set[str] | None = None,
     show_details: bool = True,
 ):
-    window_count = len(_usage_window_keys(usage_map))
-    if not show_details and "primary_window" in _usage_window_keys(usage_map):
-        window_count -= 1
+    window_count = len(_visible_window_keys(usage_map, show_details=show_details))
     narrow_threshold = 80 + max(window_count - 2, 0) * 18
     compact_threshold = 150 + max(window_count - 2, 0) * 10
 
