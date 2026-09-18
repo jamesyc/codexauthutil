@@ -81,6 +81,7 @@ The project stores state under `~/.codexauth`:
 
 - `~/.codexauth/tokens/<name>.json`: saved named profiles
 - `~/.codexauth/active`: name of the active profile
+- `~/.codexauth/local-only`: names of profiles that must not participate in sync
 - `~/.codexauth/auth.json.bak`: backup of the previous `~/.codex/auth.json`
 
 The active Codex auth file remains:
@@ -101,6 +102,11 @@ If a profile JSON path is listed in the sync repository's `.gitignore`, that
 entry should be treated as an explicit blacklist or ban for that profile. In
 other words, an ignored `*.json` file is not just omitted from sync; it means
 the matching local stored profile should be considered disallowed.
+
+Local-only profiles are a separate machine-local concept. Their names are stored in
+`~/.codexauth/local-only`, excluded from import, export, and hidden-preference sync, and written to
+a Codex-owned block in the checkout's `.git/info/exclude`. The tracked `.gitignore` keeps its
+existing shared-ban meaning.
 
 ## Command Design
 
@@ -127,6 +133,7 @@ the matching local stored profile should be considered disallowed.
 - Merges hidden preferences against the last agreed state; stores this local state atomically under `~/.codexauth/sync-state/`. With no prior state, hidden preferences from either side are retained.
 - Applies explicit `.gitignore` profile bans to the local store. File absence alone is not a deletion instruction.
 - Checks bans from both Git branches before comparing credential blobs. Blacklisted tracked files use normal Git integration, with unresolved conflicts still stopping the pass. Identical Git blobs need no credential comparison, so an unchanged unsupported historical profile cannot block other accounts.
+- Never imports, exports, removes, or publishes profiles named in `~/.codexauth/local-only`; refreshes and active reconciliation may still update their local stored credentials.
 
 ### `codexauth list`
 
@@ -161,6 +168,7 @@ the matching local stored profile should be considered disallowed.
 - Performs a lightweight validity check by requiring `auth_mode` or `tokens`.
 - Copies the source auth file into local storage under the given name.
 - Preserves the source file's modified timestamp so imported profile age stays meaningful.
+- `--local-only` records the profile as machine-local and excludes its sync-repository path through `.git/info/exclude`.
 
 ### `codexauth start-weekly [name ...]`
 
@@ -200,6 +208,7 @@ the matching local stored profile should be considered disallowed.
 - Maps the response into the local `auth.json`-style profile structure.
 - Prompts for a profile name if the user did not pass one on the command line.
 - Saves the new profile under `~/.codexauth/tokens/<name>.json`.
+- `--local-only` applies the same machine-local behavior as `add --local-only`.
 - Removes the pending OAuth state after success.
 
 ### `codexauth use <name>`

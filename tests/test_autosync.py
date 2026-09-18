@@ -95,6 +95,36 @@ def test_sync_merges_every_account_and_is_noop_when_repeated(repos):
     assert git(local, "status", "--porcelain").stdout == ""
 
 
+def test_sync_keeps_local_only_profile_off_remote_and_preserves_local_hiding(repos):
+    local, _, remote = repos
+    store.save_codex_auth(profile(4))
+    added = CliRunner().invoke(cli, ["add", "private", "--local-only"])
+    assert added.exit_code == 0, added.output
+    store.hide_profile("private")
+
+    report = sync_once(local)
+
+    assert store.load_profile("private") == profile(4)
+    assert store.list_hidden_profiles() == {"private"}
+    assert "private" not in report.imported | report.exported | report.removed
+    assert not (local / "private.json").exists()
+    assert git(remote, "show", "main:private.json", check=False).returncode != 0
+    assert git(remote, "show", "main:hidden", check=False).returncode != 0
+    exclude = Path(git(local, "rev-parse", "--git-path", "info/exclude").stdout.strip())
+    if not exclude.is_absolute():
+        exclude = local / exclude
+    assert "/private.json" in exclude.read_text()
+
+    sync_once(local)
+
+    assert store.list_hidden_profiles() == {"private"}
+
+    store.delete_profile("private")
+    sync_once(local)
+
+    assert "/private.json" not in exclude.read_text()
+
+
 @pytest.mark.parametrize("command", [[], ["watch"]])
 def test_default_and_watch_sync_before_usage_and_publish_refreshed_tokens(
     repos, monkeypatch, command

@@ -53,6 +53,15 @@ def test_delete_profile_clears_hidden_entry(sample_profile):
     assert store.list_hidden_profiles() == set()
 
 
+def test_delete_profile_clears_local_only_entry(sample_profile):
+    store.save_profile("work", sample_profile)
+    store.mark_profile_local_only("work")
+
+    store.delete_profile("work")
+
+    assert store.list_local_only_profiles() == set()
+
+
 def test_load_profile(sample_profile):
     store.save_profile("work", sample_profile)
     loaded = store.load_profile("work")

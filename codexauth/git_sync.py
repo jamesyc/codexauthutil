@@ -6,6 +6,10 @@ import subprocess
 from pathlib import Path
 
 
+LOCAL_ONLY_BEGIN = "# codexauth local-only begin"
+LOCAL_ONLY_END = "# codexauth local-only end"
+
+
 class GitCommandError(Exception):
     """Raised when a git subprocess fails."""
 
@@ -48,6 +52,56 @@ def ensure_git_repo(sync_dir: Path) -> None:
     if not sync_dir.exists():
         raise FileNotFoundError(f"Sync directory does not exist: {sync_dir}")
     _run_git(sync_dir, "rev-parse", "--is-inside-work-tree")
+
+
+def sync_local_profile_excludes(sync_dir: Path, names: set[str]) -> None:
+    """Keep Codex-managed profile exclusions in this checkout's local Git metadata."""
+    ensure_git_repo(sync_dir)
+    root = Path(_run_git(sync_dir, "rev-parse", "--show-toplevel").stdout.strip()).resolve()
+    prefix = sync_dir.resolve().relative_to(root)
+    exclude_path = Path(
+        _run_git(sync_dir, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude")
+        .stdout.strip()
+    )
+
+    existing = exclude_path.read_text() if exclude_path.exists() else ""
+    kept: list[str] = []
+    in_managed_block = False
+    for line in existing.splitlines():
+        if line == LOCAL_ONLY_BEGIN:
+            if in_managed_block:
+                raise ValueError(f"Malformed Codex block in {exclude_path}")
+            in_managed_block = True
+        elif line == LOCAL_ONLY_END:
+            if not in_managed_block:
+                raise ValueError(f"Malformed Codex block in {exclude_path}")
+            in_managed_block = False
+        elif not in_managed_block:
+            kept.append(line)
+    if in_managed_block:
+        raise ValueError(f"Malformed Codex block in {exclude_path}")
+
+    kept_text = "\n".join(kept).rstrip("\n")
+    managed = [LOCAL_ONLY_BEGIN]
+    managed.extend(
+        f"/{_escape_gitignore_path((prefix / f'{name}.json').as_posix())}"
+        for name in sorted(names)
+    )
+    managed.append(LOCAL_ONLY_END)
+    parts = (kept_text, "\n".join(managed) if names else "")
+    updated = "\n".join(part for part in parts if part)
+    if updated:
+        updated += "\n"
+    if updated == existing:
+        return
+    exclude_path.parent.mkdir(parents=True, exist_ok=True)
+    exclude_path.write_text(updated)
+
+
+def _escape_gitignore_path(path: str) -> str:
+    for character in ("\\", "*", "?", "["):
+        path = path.replace(character, f"\\{character}")
+    return path
 
 
 def pull_sync_repo(sync_dir: Path) -> str:

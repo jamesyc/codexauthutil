@@ -14,6 +14,7 @@ import click
 
 from codexauth import store
 from codexauth.credentials import compare_credentials
+from codexauth.git_sync import sync_local_profile_excludes
 from codexauth.locking import sync_lock
 from codexauth.reconcile import reconcile_active_to_store, reconcile_imported_active_profile
 from codexauth.sync import HIDDEN_SYNC_FILE, list_blacklisted_profiles, parse_blacklisted_profiles
@@ -144,12 +145,13 @@ class SyncRepo:
             changed.update(filter(None, self.git(*args).stdout.split("\0")))
         paths = []
         banned = set(list_blacklisted_profiles(self.directory))
+        local_only = store.list_local_only_profiles()
         for path in sorted(changed):
             if not self.managed(path):
                 continue
             filename = self.root / path
             if filename.suffix == ".json":
-                if filename.stem in banned:
+                if filename.stem in banned or filename.stem in local_only:
                     continue
                 raw = _read(filename)
                 try:
@@ -257,7 +259,8 @@ def _merge_store(sync_dir: Path, report: SyncReport) -> None:
     else:
         if preflight.status in {"unsafe", "warning"} and active:
             report.skipped[active] = preflight.message
-    banned = set(list_blacklisted_profiles(sync_dir))
+    local_only = store.list_local_only_profiles()
+    banned = set(list_blacklisted_profiles(sync_dir)) - local_only
     for name in sorted(banned & set(store.list_profiles())):
         store.delete_profile(name)
         if store.get_active() == name:
@@ -265,7 +268,7 @@ def _merge_store(sync_dir: Path, report: SyncReport) -> None:
         report.removed.add(name)
 
     external_names = {path.stem for path in sync_dir.glob("*.json")}
-    for name in sorted((set(store.list_profiles()) | external_names) - banned):
+    for name in sorted((set(store.list_profiles()) | external_names) - banned - local_only):
         if name in report.skipped:
             continue
         local_path, external_path = store.TOKENS_DIR / f"{name}.json", sync_dir / f"{name}.json"
@@ -313,9 +316,11 @@ def _merge_hidden(sync_dir: Path) -> tuple[Path, bytes]:
     base = set(json.loads(previous)["hidden"]) if previous else set()
     external_path = sync_dir / HIDDEN_SYNC_FILE
     external_raw = _read(external_path)
-    merged = _merge_names(store.list_hidden_profiles(), _names(external_raw), base)
-    merged &= set(store.list_profiles())
-    store.save_hidden_profiles(merged)
+    local_only = store.list_local_only_profiles()
+    local_hidden = store.list_hidden_profiles()
+    merged = _merge_names(local_hidden - local_only, _names(external_raw), base)
+    merged &= set(store.list_profiles()) - local_only
+    store.save_hidden_profiles(merged | (local_hidden & local_only))
     if merged or external_raw is not None:
         _write(external_path, "".join(f"{name}\n" for name in sorted(merged)).encode(), external_raw)
     return state_path, json.dumps({"hidden": sorted(merged)}).encode()
@@ -325,6 +330,7 @@ def _local_snapshot() -> dict[Path, bytes | None]:
     return {
         path: _read(path) for path in [
             *store.TOKENS_DIR.glob("*.json"), store.CODEX_AUTH, store.ACTIVE_FILE, store.HIDDEN_FILE,
+            store.LOCAL_ONLY_FILE,
         ]
     }
 
@@ -356,6 +362,7 @@ def sync_once(
     report = SyncReport()
     with sync_lock():
         repo = SyncRepo(sync_dir)
+        sync_local_profile_excludes(repo.directory, store.list_local_only_profiles())
         repo.check_ready()
         for attempt in range(1, max_attempts + 1):
             report.attempts = attempt

@@ -249,6 +249,30 @@ def test_add_from_file(runner, sample_profile, tmp_path):
     assert int((store_module.TOKENS_DIR / "work.json").stat().st_mtime) == 1_700_000_000
 
 
+def test_add_local_only_is_visible_but_not_exported(
+    runner, sample_profile, tmp_path, monkeypatch
+):
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text(json.dumps(sample_profile))
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    monkeypatch.setattr(cli_module, "get_sync_dir", lambda: None)
+
+    result = runner.invoke(
+        cli, ["add", "private", "--file", str(auth_file), "--local-only"]
+    )
+    listed = runner.invoke(cli, ["list", "--no-usage", "--no-interactive"])
+    monkeypatch.setattr(cli_module, "get_sync_dir", lambda: sync_dir)
+    exported = runner.invoke(cli, ["export"])
+
+    assert result.exit_code == 0, result.output
+    assert "local only" in result.output
+    assert "private" in listed.output
+    assert store_module.list_local_only_profiles() == {"private"}
+    assert exported.exit_code == 0, exported.output
+    assert not (sync_dir / "private.json").exists()
+
+
 def test_add_missing_file(runner):
     result = runner.invoke(cli, ["add", "work", "--file", "/nonexistent/auth.json"])
     assert result.exit_code != 0
@@ -365,6 +389,31 @@ def test_login_success_saves_profile_and_shows_list(runner, monkeypatch):
     assert saved["tokens"]["refresh_token"] == "new-refresh"
     assert saved["tokens"]["account_id"] == "acct-from-id-token"
     assert pending_path.exists() is False
+
+
+def test_login_local_only_marks_profile(runner, monkeypatch):
+    async def exchange(callback_url):
+        assert callback_url == "http://localhost/callback"
+        return {
+            "auth_mode": "chatgpt",
+            "tokens": {"access_token": "private-access"},
+        }
+
+    monkeypatch.setattr(cli_module, "begin_login", lambda name: "https://example.test/login")
+    monkeypatch.setattr(cli_module, "exchange_code", exchange)
+    monkeypatch.setattr(cli_module, "clear_pending_login", lambda: None)
+    monkeypatch.setattr(cli_module, "get_sync_dir", lambda: None)
+
+    result = runner.invoke(
+        cli,
+        ["login", "private", "--local-only"],
+        input="http://localhost/callback\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "local only" in result.output
+    assert store_module.list_local_only_profiles() == {"private"}
+    assert store_module.load_profile("private")["tokens"]["access_token"] == "private-access"
 
 
 def test_login_preserves_token_response_account_id(runner, monkeypatch):
@@ -1113,6 +1162,32 @@ def test_list_no_interactive_skips_push_prompt_after_refresh(runner, saved_profi
     assert "Refreshed stale stored tokens" not in result.output
 
 
+def test_list_does_not_offer_to_push_refreshed_local_only_profile(
+    runner, saved_profile, monkeypatch, tmp_path
+):
+    store_module.mark_profile_local_only("work")
+    monkeypatch.setattr(cli_module, "get_sync_dir", lambda: tmp_path)
+
+    async def fake_fetch_all_usage(profiles):
+        return usage_module.UsageFetchSummary(
+            usage_map={"work": cli_module.UsageResult(error="n/a")},
+            refreshed_profiles=["work"],
+        )
+
+    monkeypatch.setattr(cli_module, "fetch_all_usage", fake_fetch_all_usage)
+    monkeypatch.setattr(cli_module, "interactive_prompt", lambda profiles: None)
+    monkeypatch.setattr(
+        cli_module,
+        "_confirm_yes_no",
+        lambda prompt: (_ for _ in ()).throw(AssertionError("must not offer a push")),
+    )
+
+    result = runner.invoke(cli, ["list"])
+
+    assert result.exit_code == 0, result.output
+    assert "Refreshed stale stored tokens" not in result.output
+
+
 def test_list_prompts_only_once_when_reconcile_and_refresh_both_update_store(
     runner,
     monkeypatch,
@@ -1240,6 +1315,23 @@ def test_import_empty_hidden_file_clears_local_hidden_preferences(
 
     assert result.exit_code == 0
     assert "Imported hidden profile preferences" in result.output
+    assert store_module.list_hidden_profiles() == set()
+
+
+def test_import_does_not_change_local_only_hidden_preference(
+    runner, sample_profile, monkeypatch, tmp_path
+):
+    sync_dir = tmp_path / "sync"
+    sync_dir.mkdir()
+    (sync_dir / "hidden").write_text("private\n")
+    store_module.save_profile("private", sample_profile)
+    store_module.mark_profile_local_only("private")
+    (tmp_path / ".env").write_text(f"CODEXAUTH_SYNC_DIR={sync_dir}\n")
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(cli, ["import"])
+
+    assert result.exit_code == 0, result.output
     assert store_module.list_hidden_profiles() == set()
 
 

@@ -16,7 +16,12 @@ from rich.text import Text
 from codexauth.autosync import SyncError, sync_once
 from codexauth.config import get_sync_dir
 from codexauth.credentials import credential_summary
-from codexauth.git_sync import GitCommandError, pull_sync_repo, push_sync_repo
+from codexauth.git_sync import (
+    GitCommandError,
+    pull_sync_repo,
+    push_sync_repo,
+    sync_local_profile_excludes,
+)
 from codexauth.locking import SyncBusyError, sync_lock
 from codexauth.oauth import OAuthError, begin_login, clear_pending_login, exchange_code
 from codexauth.reconcile import reconcile_active_to_store, reconcile_imported_active_profile
@@ -344,6 +349,12 @@ def _show_profiles(
         usage_map = usage_summary.usage_map
         refreshed_profiles = usage_summary.refreshed_profiles
 
+    local_only = store.list_local_only_profiles()
+    syncable_refreshed = [name for name in refreshed_profiles if name not in local_only]
+    syncable_reconcile = (
+        reconcile_result.store_updated_from_auth and get_active() not in local_only
+    )
+
     console.print(f"[dim]{datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}[/dim]")
     terminal_width = getattr(ctx, "terminal_width", None) if ctx else None
     if terminal_width is None:
@@ -362,12 +373,12 @@ def _show_profiles(
     if auto_sync:
         # Usage lookup can rotate tokens after the initial sync. Publish those
         # updates automatically while the table remains visible.
-        if synced and (refreshed_profiles or reconcile_result.store_updated_from_auth):
+        if synced and (syncable_refreshed or syncable_reconcile):
             _sync_for_display()
     else:
         _maybe_offer_push_after_list_updates(
             reconcile_result=reconcile_result,
-            refreshed_profiles=refreshed_profiles,
+            refreshed_profiles=syncable_refreshed,
             allow_prompt=not no_interactive,
         )
 
@@ -388,9 +399,12 @@ def _show_profiles(
 @click.argument("name")
 def use_cmd(name):
     """Activate a stored profile by copying it into ~/.codex/auth.json."""
+    reconciled_name = get_active()
     reconcile_result = _run_preflight_reconciliation(prompt_on_unsafe=True)
     _activate(name)
-    _maybe_offer_push_after_reconcile(reconcile_result, allow_prompt=True)
+    _maybe_offer_push_after_reconcile(
+        reconcile_result, allow_prompt=True, profile_name=reconciled_name
+    )
 
 
 @cli.command(
@@ -409,8 +423,14 @@ def use_cmd(name):
     type=click.Path(exists=True),
     help="Read auth.json from this path instead of the default ~/.codex/auth.json.",
 )
-def add_cmd(name, file_path):
+@click.option(
+    "--local-only",
+    is_flag=True,
+    help="Keep this profile on the current machine and exclude it from all sync operations.",
+)
+def add_cmd(name, file_path, local_only):
     """Save the current auth.json as a named profile in ~/.codexauth/tokens."""
+    _validate_profile_name(name)
     src = Path(file_path) if file_path else store.CODEX_AUTH
     if not src.exists():
         raise click.ClickException(f"{src} does not exist.")
@@ -421,7 +441,10 @@ def add_cmd(name, file_path):
 
     _validate_auth_json(data)
     save_profile_from_file(name, src, preserve_mtime=True)
-    console.print(f"[green]✓[/green] Saved profile [bold]{name}[/bold]")
+    if local_only:
+        _mark_profile_local_only(name)
+    suffix = " [dim](local only)[/dim]" if local_only else ""
+    console.print(f"[green]✓[/green] Saved profile [bold]{name}[/bold]{suffix}")
 
 
 @cli.command(
@@ -434,9 +457,16 @@ def add_cmd(name, file_path):
     ),
 )
 @click.argument("name", required=False)
-def login_cmd(name):
+@click.option(
+    "--local-only",
+    is_flag=True,
+    help="Keep this profile on the current machine and exclude it from all sync operations.",
+)
+def login_cmd(name, local_only):
     """Bootstrap a ChatGPT-backed profile using a manual browser OAuth flow."""
     try:
+        if name is not None:
+            _validate_profile_name(name)
         auth_url = begin_login(name)
         console.print("Open this URL in your browser:")
         console.print(auth_url)
@@ -447,14 +477,16 @@ def login_cmd(name):
         callback_url = click.prompt("Callback URL", type=str)
         profile = asyncio.run(exchange_code(callback_url))
         final_name = name or click.prompt("Profile name", type=str).strip()
-        if not final_name:
-            raise click.ClickException("Profile name cannot be empty.")
+        _validate_profile_name(final_name)
         save_profile(final_name, profile)
+        if local_only:
+            _mark_profile_local_only(final_name)
         clear_pending_login()
     except OAuthError as e:
         raise click.ClickException(str(e))
 
-    console.print(f"[green]✓[/green] Saved profile [bold]{final_name}[/bold]")
+    suffix = " [dim](local only)[/dim]" if local_only else ""
+    console.print(f"[green]✓[/green] Saved profile [bold]{final_name}[/bold]{suffix}")
     _show_profiles(no_interactive=True, no_usage=True)
 
 
@@ -503,12 +535,15 @@ def unhide_cmd(name):
 @click.argument("name")
 def remove_cmd(name):
     """Delete a stored profile and clear the active marker if it was selected."""
+    was_local_only = name in store.list_local_only_profiles()
     try:
         delete_profile(name)
     except ProfileNotFoundError as e:
         raise click.ClickException(str(e))
     if get_active() == name:
         store.ACTIVE_FILE.unlink(missing_ok=True)
+    if was_local_only:
+        _refresh_local_profile_excludes()
     console.print(f"[green]✓[/green] Removed profile [bold]{name}[/bold]")
 
 
@@ -702,6 +737,38 @@ def _activate(name: str):
     console.print(f"[green]✓[/green] Activated profile [bold]{name}[/bold]")
 
 
+def _validate_profile_name(name: str) -> None:
+    if (
+        not name
+        or name != name.strip()
+        or name in {".", ".."}
+        or Path(name).name != name
+        or "\\" in name
+        or "\n" in name
+        or "\r" in name
+    ):
+        raise click.ClickException("Profile name must be a single, non-empty filename component.")
+
+
+def _mark_profile_local_only(name: str) -> None:
+    store.mark_profile_local_only(name)
+    _refresh_local_profile_excludes()
+
+
+def _refresh_local_profile_excludes() -> None:
+    sync_dir = get_sync_dir()
+    if sync_dir is None:
+        return
+    try:
+        sync_local_profile_excludes(sync_dir, store.list_local_only_profiles())
+    except (FileNotFoundError, GitCommandError, ValueError) as exc:
+        detail = exc.message if isinstance(exc, GitCommandError) else str(exc)
+        console.print(
+            "[yellow]Profile remains local-only, but the Git exclude file could not be updated: "
+            f"{escape(detail)}[/yellow]"
+        )
+
+
 def _validate_auth_json(data: object) -> None:
     if not isinstance(data, dict):
         raise click.ClickException("File doesn't look like a valid auth.json.")
@@ -740,11 +807,12 @@ def _require_sync_dir() -> Path:
 
 
 def _run_import(sync_dir: Path) -> set[str]:
-    blacklisted_names = set(list_blacklisted_profiles(sync_dir))
+    local_only = store.list_local_only_profiles()
+    blacklisted_names = set(list_blacklisted_profiles(sync_dir)) - local_only
     candidates = [
         candidate
         for candidate in build_import_candidates(sync_dir)
-        if candidate.name not in blacklisted_names
+        if candidate.name not in blacklisted_names and candidate.name not in local_only
     ]
     imported = 0
     imported_names: set[str] = set()
@@ -784,10 +852,11 @@ def _run_import(sync_dir: Path) -> set[str]:
 
 
 def _run_export(sync_dir: Path) -> None:
+    local_only = store.list_local_only_profiles()
     blacklisted_names = set(list_blacklisted_profiles(sync_dir))
     candidates = [
         candidate for candidate in build_export_candidates(sync_dir)
-        if candidate.name not in blacklisted_names
+        if candidate.name not in blacklisted_names and candidate.name not in local_only
     ]
     hidden_exported = export_hidden_profiles(sync_dir)
     if not candidates:
@@ -837,10 +906,10 @@ def _should_copy_profile(
 
 def _merge_newer_external_profiles(sync_dir: Path) -> set[str]:
     """Bring newer external credentials into store before publishing local changes."""
-    blacklisted_names = set(list_blacklisted_profiles(sync_dir))
+    excluded_names = set(list_blacklisted_profiles(sync_dir)) | store.list_local_only_profiles()
     imported_names = set()
     for candidate in build_import_candidates(sync_dir):
-        if candidate.name in blacklisted_names:
+        if candidate.name in excluded_names:
             continue
         # Ambiguous pairs are left for the export step to prompt exactly once.
         if candidate.comparison.winner == "source":
@@ -895,8 +964,12 @@ def _run_preflight_reconciliation(prompt_on_unsafe: bool):
     return result
 
 
-def _maybe_offer_push_after_reconcile(result, allow_prompt: bool) -> None:
+def _maybe_offer_push_after_reconcile(
+    result, allow_prompt: bool, profile_name: str | None = None
+) -> None:
     if not allow_prompt or not result or not result.store_updated_from_auth:
+        return
+    if (profile_name or get_active()) in store.list_local_only_profiles():
         return
 
     _maybe_offer_push_for_local_updates(
@@ -917,7 +990,11 @@ def _maybe_offer_push_after_list_updates(
     if not allow_prompt:
         return
 
-    if reconcile_result and reconcile_result.store_updated_from_auth:
+    if (
+        reconcile_result
+        and reconcile_result.store_updated_from_auth
+        and get_active() not in store.list_local_only_profiles()
+    ):
         _maybe_offer_push_for_local_updates(
             header_lines=[
                 "##### Local store updated during list      #####",
@@ -932,6 +1009,9 @@ def _maybe_offer_push_after_list_updates(
 
 
 def _maybe_offer_push_after_refresh(refreshed_profiles: list[str], allow_prompt: bool) -> None:
+    refreshed_profiles = [
+        name for name in refreshed_profiles if name not in store.list_local_only_profiles()
+    ]
     if not allow_prompt or not refreshed_profiles:
         return
 
@@ -974,11 +1054,16 @@ def _maybe_offer_push_for_local_updates(header_lines: list[str], prompt: str) ->
 def _push_sync_changes(sync_dir: Path) -> None:
     _run_preflight_reconciliation(prompt_on_unsafe=True)
     try:
+        local_only = store.list_local_only_profiles()
+        if local_only:
+            sync_local_profile_excludes(sync_dir, local_only)
         pull_message = pull_sync_repo(sync_dir)
     except FileNotFoundError as e:
         raise click.ClickException(str(e))
     except GitCommandError as e:
         raise click.ClickException(e.message)
+    except ValueError as e:
+        raise click.ClickException(str(e))
 
     console.print(f"[green]✓[/green] Pulled sync repo [bold]{sync_dir}[/bold]")
     if pull_message:

@@ -142,12 +142,14 @@ def import_hidden_profiles(sync_dir: Path) -> bool:
         for line in source_path.read_text().splitlines()
         if line.strip()
     }
-    store.save_hidden_profiles(names)
+    local_only = store.list_local_only_profiles()
+    local_hidden = store.list_hidden_profiles() & local_only
+    store.save_hidden_profiles((names - local_only) | local_hidden)
     return True
 
 
 def export_hidden_profiles(sync_dir: Path) -> bool:
-    names = store.list_hidden_profiles()
+    names = store.list_hidden_profiles() - store.list_local_only_profiles()
     dest_path = sync_dir / HIDDEN_SYNC_FILE
     if not names:
         if dest_path.exists():

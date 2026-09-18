@@ -56,6 +56,11 @@ Or save from a specific file:
 ```
 
 `add` preserves the source file's modified timestamp, which is useful when comparing local and synced copies later.
+Use `--local-only` to keep a profile usable on this machine without importing or exporting it:
+
+```bash
+./codexauth.py add private --local-only
+```
 
 ### Log into a new profile
 
@@ -67,6 +72,12 @@ Bootstrap a fresh ChatGPT-backed profile through the browser OAuth flow:
 or
 ```bash
 ./codexauth.py login work
+```
+
+OAuth profiles can also stay on the current machine only:
+
+```bash
+./codexauth.py login private --local-only
 ```
 
 This uses the hard-coded Codex OAuth client and redirect URI `http://localhost:1455/auth/callback`, and sends the same extra authorize parameters Codex/OpenClaw use.
@@ -263,6 +274,9 @@ A profile named in the sync repository's `.gitignore` is removed from the local 
 absence is not a shared deletion; use this blacklist when a removal must persist across machines.
 Blacklisted files are excluded from credential comparisons even if they are still tracked in Git.
 An unchanged historical profile does not block other accounts from syncing.
+Profiles created with `--local-only` are recorded in `~/.codexauth/local-only`, omitted from every
+sync path, and added to the repository-local `.git/info/exclude`. They remain available for local
+usage and activation, but neither their credentials nor their hidden preference are published.
 
 The older `pull` and `push` commands remain callable for compatibility but are hidden from
 normal help. They retain their interactive conflict-resolution behavior; running the script
@@ -330,6 +344,7 @@ Profiles are stored in `~/.codexauth/`:
 │   └── personal.json
 ├── active              # name of the currently active profile
 ├── hidden              # list-view preference for hidden profile names
+├── local-only          # profile names that must never be synced
 ├── auth.json.bak       # backup of the last overwritten auth.json
 ├── sync.lock           # local sync process lock
 └── sync-state/         # last agreed hidden-profile preferences for each repository
@@ -349,6 +364,8 @@ When `CODEXAUTH_SYNC_DIR` is configured, imported and exported profiles are stor
 ```
 
 Profile JSON files are copied with metadata preserved. Modified times are shown as context for unresolved conflicts, while credential timestamps determine freshness. The `hidden` file is a newline-delimited list of profile names hidden from the default list view.
+Local-only profiles have no JSON file in this directory; their would-be paths are ignored through
+the checkout's `.git/info/exclude` file.
 
 # File write semantics
 

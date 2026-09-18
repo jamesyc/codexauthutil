@@ -9,6 +9,7 @@ STORE_DIR = Path.home() / ".codexauth"
 TOKENS_DIR = STORE_DIR / "tokens"
 ACTIVE_FILE = STORE_DIR / "active"
 HIDDEN_FILE = STORE_DIR / "hidden"
+LOCAL_ONLY_FILE = STORE_DIR / "local-only"
 CODEX_AUTH = Path.home() / ".codex" / "auth.json"
 CODEX_AUTH_BACKUP = STORE_DIR / "auth.json.bak"
 
@@ -57,6 +58,36 @@ def list_hidden_profiles() -> set[str]:
         for line in HIDDEN_FILE.read_text().splitlines()
         if line.strip()
     }
+
+
+def list_local_only_profiles() -> set[str]:
+    _ensure_store()
+    if not LOCAL_ONLY_FILE.exists():
+        return set()
+    return {
+        line.strip()
+        for line in LOCAL_ONLY_FILE.read_text().splitlines()
+        if line.strip()
+    }
+
+
+def _save_local_only_profiles(names: set[str]) -> None:
+    _ensure_store()
+    existing = set(list_profiles())
+    local_names = sorted(name for name in names if name in existing)
+    if local_names:
+        LOCAL_ONLY_FILE.write_text("".join(f"{name}\n" for name in local_names))
+        LOCAL_ONLY_FILE.chmod(0o600)
+    else:
+        LOCAL_ONLY_FILE.unlink(missing_ok=True)
+
+
+def mark_profile_local_only(name: str) -> None:
+    if name not in list_profiles():
+        raise ProfileNotFoundError(f"Profile '{name}' not found.")
+    names = list_local_only_profiles()
+    names.add(name)
+    _save_local_only_profiles(names)
 
 
 def _save_hidden_profiles(names: set[str]) -> None:
@@ -125,6 +156,10 @@ def delete_profile(name: str):
     if name in hidden:
         hidden.remove(name)
         _save_hidden_profiles(hidden)
+    local_only = list_local_only_profiles()
+    if name in local_only:
+        local_only.remove(name)
+        _save_local_only_profiles(local_only)
 
 
 def get_active() -> str | None:
