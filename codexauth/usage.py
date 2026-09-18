@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -279,6 +280,13 @@ def _parse_reset_after_seconds(value):
     return parsed if parsed >= 0 else None
 
 
+def _parse_percentage(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    parsed = float(value)
+    return parsed if math.isfinite(parsed) and 0 <= parsed <= 100 else None
+
+
 def _canonical_window_key(limit_window_seconds: int | None) -> str | None:
     if limit_window_seconds == SHORT_WINDOW_SECONDS:
         return "primary_window"
@@ -349,7 +357,7 @@ def _parse_usage_windows(rate_limit: dict) -> dict[str, UsageWindow]:
             continue
         raw_windows[key] = UsageWindow(
             key=key,
-            used_pct=value.get("used_percent"),
+            used_pct=_parse_percentage(value.get("used_percent")),
             reset_at=_parse_reset_at(value.get("reset_at")),
             limit_window_seconds=_parse_limit_window_seconds(value.get("limit_window_seconds")),
             reset_after_seconds=_parse_reset_after_seconds(value.get("reset_after_seconds")),
@@ -388,7 +396,7 @@ def _parse_additional_rate_limits(items) -> dict[str, UsageWindow]:
                 continue
             raw_windows[key] = UsageWindow(
                 key=key,
-                used_pct=value.get("used_percent"),
+                used_pct=_parse_percentage(value.get("used_percent")),
                 reset_at=_parse_reset_at(value.get("reset_at")),
                 label=label_base if key == "primary_window" else f"{label_base} Weekly",
                 short_label=short_label if key == "primary_window" else f"{short_label} W",

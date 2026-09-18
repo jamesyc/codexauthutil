@@ -341,6 +341,27 @@ def test_parse_usage_windows_ignores_invalid_shapes_and_values():
     assert "secondary_window" not in result
 
 
+@pytest.mark.parametrize(
+    "value",
+    ["50", True, None, -1, 101, float("nan"), float("inf"), float("-inf")],
+)
+def test_usage_parsers_reject_invalid_percentages(value):
+    standard = _parse_usage_windows(
+        {"primary_window": {"used_percent": value}}
+    )
+    additional = _parse_additional_rate_limits(
+        [
+            {
+                "limit_name": "Spark",
+                "rate_limit": {"primary_window": {"used_percent": value}},
+            }
+        ]
+    )
+
+    assert standard["primary_window"].used_pct is None
+    assert additional["additional_spark_primary_window"].used_pct is None
+
+
 def test_parse_additional_rate_limits_uses_duration_to_classify_named_windows():
     result = _parse_additional_rate_limits(
         [
