@@ -271,7 +271,7 @@ def _merge_store(sync_dir: Path, report: SyncReport) -> None:
     for name in sorted((set(store.list_profiles()) | external_names) - banned - local_only):
         if name in report.skipped:
             continue
-        local_path, external_path = store.TOKENS_DIR / f"{name}.json", sync_dir / f"{name}.json"
+        local_path, external_path = store.profile_path(name), sync_dir / f"{name}.json"
         local, external = _read(local_path), _read(external_path)
         if local is None and external is None:
             continue

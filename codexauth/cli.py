@@ -400,6 +400,7 @@ def _show_profiles(
 @click.argument("name")
 def use_cmd(name):
     """Activate a stored profile by copying it into ~/.codex/auth.json."""
+    _validate_profile_name(name)
     reconciled_name = get_active()
     reconcile_result = _run_preflight_reconciliation(prompt_on_unsafe=True)
     _activate(name)
@@ -503,6 +504,7 @@ def login_cmd(name, local_only):
 @click.argument("name")
 def hide_cmd(name):
     """Hide a stored profile from the default list view."""
+    _validate_profile_name(name)
     try:
         hide_profile(name)
     except ProfileNotFoundError as e:
@@ -518,6 +520,7 @@ def hide_cmd(name):
 @click.argument("name")
 def unhide_cmd(name):
     """Restore a stored profile to the default list view."""
+    _validate_profile_name(name)
     try:
         unhide_profile(name)
     except ProfileNotFoundError as e:
@@ -536,6 +539,7 @@ def unhide_cmd(name):
 @click.argument("name")
 def remove_cmd(name):
     """Delete a stored profile and clear the active marker if it was selected."""
+    _validate_profile_name(name)
     was_local_only = name in store.list_local_only_profiles()
     try:
         delete_profile(name)
@@ -739,16 +743,10 @@ def _activate(name: str):
 
 
 def _validate_profile_name(name: str) -> None:
-    if (
-        not name
-        or name != name.strip()
-        or name in {".", ".."}
-        or Path(name).name != name
-        or "\\" in name
-        or "\n" in name
-        or "\r" in name
-    ):
-        raise click.ClickException("Profile name must be a single, non-empty filename component.")
+    try:
+        store.validate_profile_name(name)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 def _mark_profile_local_only(name: str) -> None:

@@ -30,7 +30,7 @@ class SyncCandidate:
 
 
 def profile_path(name: str) -> Path:
-    return store.TOKENS_DIR / f"{name}.json"
+    return store.profile_path(name)
 
 
 def list_sync_profiles(sync_dir: Path) -> list[str]:

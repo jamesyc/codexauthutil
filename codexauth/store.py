@@ -3,7 +3,7 @@
 import json
 import os
 import shutil
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 STORE_DIR = Path.home() / ".codexauth"
 TOKENS_DIR = STORE_DIR / "tokens"
@@ -21,6 +21,24 @@ class ProfileNotFoundError(Exception):
 def _ensure_store():
     STORE_DIR.mkdir(mode=0o700, exist_ok=True)
     TOKENS_DIR.mkdir(mode=0o700, exist_ok=True)
+
+
+def validate_profile_name(name: str) -> None:
+    if (
+        not name
+        or name != name.strip()
+        or name in {".", ".."}
+        or Path(name).name != name
+        or PureWindowsPath(name).drive
+        or "\\" in name
+        or any(ord(char) < 32 or ord(char) == 127 for char in name)
+    ):
+        raise ValueError("Profile name must be a single, non-empty filename component.")
+
+
+def profile_path(name: str) -> Path:
+    validate_profile_name(name)
+    return TOKENS_DIR / f"{name}.json"
 
 
 def _write_json_in_place(path: Path, data: dict):
@@ -111,7 +129,7 @@ def list_visible_profiles() -> list[str]:
 
 
 def hide_profile(name: str) -> None:
-    path = TOKENS_DIR / f"{name}.json"
+    path = profile_path(name)
     if not path.exists():
         raise ProfileNotFoundError(f"Profile '{name}' not found.")
     hidden = list_hidden_profiles()
@@ -120,7 +138,7 @@ def hide_profile(name: str) -> None:
 
 
 def unhide_profile(name: str) -> None:
-    path = TOKENS_DIR / f"{name}.json"
+    path = profile_path(name)
     if not path.exists():
         raise ProfileNotFoundError(f"Profile '{name}' not found.")
     hidden = list_hidden_profiles()
@@ -129,7 +147,7 @@ def unhide_profile(name: str) -> None:
 
 
 def load_profile(name: str) -> dict:
-    path = TOKENS_DIR / f"{name}.json"
+    path = profile_path(name)
     if not path.exists():
         raise ProfileNotFoundError(f"Profile '{name}' not found.")
     return json.loads(path.read_text())
@@ -137,18 +155,18 @@ def load_profile(name: str) -> dict:
 
 def save_profile(name: str, data: dict):
     _ensure_store()
-    path = TOKENS_DIR / f"{name}.json"
+    path = profile_path(name)
     _write_json_in_place(path, data)
 
 
 def save_profile_from_file(name: str, source_path: Path, preserve_mtime: bool = True):
     _ensure_store()
-    dest_path = TOKENS_DIR / f"{name}.json"
+    dest_path = profile_path(name)
     _copy_file_in_place(source_path, dest_path, preserve_mtime=preserve_mtime)
 
 
 def delete_profile(name: str):
-    path = TOKENS_DIR / f"{name}.json"
+    path = profile_path(name)
     if not path.exists():
         raise ProfileNotFoundError(f"Profile '{name}' not found.")
     path.unlink()
@@ -170,6 +188,7 @@ def get_active() -> str | None:
 
 
 def set_active(name: str):
+    validate_profile_name(name)
     _ensure_store()
     ACTIVE_FILE.write_text(name + "\n")
     ACTIVE_FILE.chmod(0o600)
@@ -185,7 +204,7 @@ def save_codex_auth(data: dict):
 
 def activate(name: str):
     """Copy a profile to ~/.codex/auth.json, backing up the existing file."""
-    src = TOKENS_DIR / f"{name}.json"
+    src = profile_path(name)
     if not src.exists():
         raise ProfileNotFoundError(f"Profile '{name}' not found.")
     if CODEX_AUTH.exists():

@@ -18,6 +18,35 @@ def test_save_and_list(sample_profile):
     assert store.list_profiles() == ["personal", "work"]
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "",
+        " ",
+        ".",
+        "..",
+        "../outside",
+        "/tmp/outside",
+        "nested/work",
+        "nested\\work",
+        "C:outside",
+        "bad\nname",
+        "bad\x00name",
+    ],
+)
+def test_profile_names_cannot_escape_store(name, sample_profile, tmp_path):
+    with pytest.raises(ValueError, match="single, non-empty filename component"):
+        store.save_profile(name, sample_profile)
+
+    assert not (tmp_path / "outside.json").exists()
+
+
+def test_profile_names_allow_literal_filename_characters(sample_profile):
+    store.save_profile("work[1]", sample_profile)
+
+    assert store.list_profiles() == ["work[1]"]
+
+
 def test_hide_profile_excludes_from_visible_list(sample_profile):
     store.save_profile("work", sample_profile)
     store.save_profile("personal", sample_profile)
