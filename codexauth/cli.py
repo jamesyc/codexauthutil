@@ -10,6 +10,7 @@ from pathlib import Path
 from time import monotonic, sleep
 
 import click
+from rich.control import Control
 from rich.markup import escape
 from rich.text import Text
 
@@ -176,7 +177,7 @@ def watch_cmd(interval):
             # then send the clear and replacement together in one buffered write.
             with console:
                 if console.is_terminal:
-                    console.clear()
+                    console.print(Control.clear(), Control.home(), end="")
                 console.print(Text.from_ansi(capture.get()), end="", soft_wrap=True)
             # Keep checks on cadence without overlapping slow requests.
             sleep(max(0, interval - (monotonic() - started)))
