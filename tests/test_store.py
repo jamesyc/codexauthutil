@@ -166,6 +166,19 @@ def test_save_profile_from_file_preserves_mtime(sample_profile, tmp_path):
     assert int(dest.stat().st_mtime) == 1_700_000_000
 
 
+def test_save_profile_from_same_inode_does_not_truncate(sample_profile, tmp_path):
+    source = tmp_path / "source.json"
+    source.write_text(json.dumps(sample_profile))
+    store.TOKENS_DIR.mkdir(parents=True)
+    destination = store.profile_path("work")
+    os.link(source, destination)
+
+    store.save_profile_from_file("work", source)
+
+    assert json.loads(source.read_text()) == sample_profile
+    assert json.loads(destination.read_text()) == sample_profile
+
+
 def test_activate_preserves_inode_and_updates_hard_link(sample_profile, tmp_path):
     existing = {"auth_mode": "chatgpt", "tokens": {"access_token": "old-access"}}
     store.CODEX_AUTH.parent.mkdir(parents=True, exist_ok=True)
@@ -180,6 +193,20 @@ def test_activate_preserves_inode_and_updates_hard_link(sample_profile, tmp_path
     assert store.CODEX_AUTH.stat().st_ino == original_inode
     assert linked.stat().st_ino == original_inode
     assert json.loads(linked.read_text())["tokens"]["access_token"] == "fake-access-token"
+
+
+def test_activate_same_inode_does_not_truncate_profile(sample_profile):
+    store.save_profile("work", sample_profile)
+    profile = store.profile_path("work")
+    store.CODEX_AUTH.parent.mkdir(parents=True)
+    os.link(profile, store.CODEX_AUTH)
+
+    store.activate("work")
+
+    assert json.loads(profile.read_text()) == sample_profile
+    assert json.loads(store.CODEX_AUTH.read_text()) == sample_profile
+    assert json.loads(store.CODEX_AUTH_BACKUP.read_text()) == sample_profile
+    assert store.get_active() == "work"
 
 
 def test_save_codex_auth_preserves_inode_and_updates_hard_link(tmp_path):

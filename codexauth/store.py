@@ -52,6 +52,9 @@ def _write_json_in_place(path: Path, data: dict):
 def _copy_file_in_place(src: Path, dest: Path, *, preserve_mtime: bool):
     """Copy file contents without replacing the destination inode when it exists."""
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists() and src.samefile(dest):
+        dest.chmod(0o600)
+        return
     with src.open("rb") as source_handle, dest.open("wb") as dest_handle:
         shutil.copyfileobj(source_handle, dest_handle)
 
