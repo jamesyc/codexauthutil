@@ -196,16 +196,36 @@ async def exchange_code(callback_url: str) -> dict:
         raise OAuthError(f"Token exchange failed: {exc}") from exc
 
     if resp.status_code != 200:
-        detail = resp.text.strip() or f"HTTP {resp.status_code}"
+        detail = f"HTTP {resp.status_code}"
+        try:
+            error_data = resp.json()
+        except ValueError:
+            pass
+        else:
+            if isinstance(error_data, dict):
+                provider_detail = error_data.get("error_description") or error_data.get("error")
+                if isinstance(provider_detail, str) and provider_detail.strip():
+                    detail = f"{detail}: {provider_detail.strip()[:300]}"
         raise OAuthError(f"Token exchange failed: {detail}")
 
-    data = resp.json()
-    tokens = {
-        "access_token": data["access_token"],
-    }
+    try:
+        data = resp.json()
+    except ValueError as exc:
+        raise OAuthError("Token exchange returned invalid JSON.") from exc
+    if not isinstance(data, dict):
+        raise OAuthError("Token exchange response must be a JSON object.")
+
+    access_token = data.get("access_token")
+    if not isinstance(access_token, str) or not access_token.strip():
+        raise OAuthError("Token exchange response has no valid access_token.")
+    tokens = {"access_token": access_token}
     for key in ("refresh_token", "id_token", "account_id"):
-        if key in data and data[key]:
-            tokens[key] = data[key]
+        if key not in data:
+            continue
+        value = data[key]
+        if not isinstance(value, str) or not value.strip():
+            raise OAuthError(f"Token exchange response has an invalid {key}.")
+        tokens[key] = value
     if "account_id" not in tokens and "id_token" in tokens:
         account_id = _account_id_from_id_token(tokens["id_token"])
         if account_id:

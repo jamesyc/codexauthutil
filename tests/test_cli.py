@@ -464,6 +464,53 @@ def test_login_preserves_token_response_account_id(runner, monkeypatch):
     assert saved["tokens"]["account_id"] == "acct-from-response"
 
 
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        (json.JSONDecodeError("invalid", "", 0), "invalid JSON"),
+        ([], "must be a JSON object"),
+        ({}, "no valid access_token"),
+        ({"access_token": ""}, "no valid access_token"),
+        ({"access_token": "valid", "refresh_token": 123}, "invalid refresh_token"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_exchange_code_rejects_malformed_success_response(
+    payload, message, monkeypatch, tmp_path
+):
+    pending_path = tmp_path / "pending-login.json"
+    monkeypatch.setattr(oauth_module, "_pending_login_path", lambda: pending_path)
+    auth_url = oauth_module.begin_login("work")
+    state = parse_qs(urlparse(auth_url).query)["state"][0]
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            if isinstance(payload, Exception):
+                raise payload
+            return payload
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, json):
+            return FakeResponse()
+
+    monkeypatch.setattr(oauth_module.httpx, "AsyncClient", FakeAsyncClient)
+    callback = f"http://localhost:1455/auth/callback?code=abc&state={state}"
+
+    with pytest.raises(oauth_module.OAuthError, match=message):
+        await oauth_module.exchange_code(callback)
+
+
 def test_login_without_name_prompts_for_profile_name(runner, monkeypatch):
     callback_url = "http://127.0.0.1:1455/callback?code=abc123&state=state-1"
     pending_path = store_module.STORE_DIR / "pending-login.json"
