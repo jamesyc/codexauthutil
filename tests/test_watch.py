@@ -252,6 +252,7 @@ def test_watch_keeps_last_snapshot_visible_while_syncing_and_fetching(
     monkeypatch.setattr(cli_module, "sync_once", sync_profiles)
     monkeypatch.setattr(cli_module, "monotonic", lambda: 0)
     monkeypatch.setattr(cli_module, "sleep", sleep)
+    monkeypatch.setenv("TERM", "xterm-256color")
     monkeypatch.setattr(
         cli_module, "console", Console(file=output, force_terminal=True, width=160)
     )
