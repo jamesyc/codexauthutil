@@ -10,8 +10,9 @@ This tool also can help you sync auth tokens between different computers.
 
 ## Requirements
 
-- Python 3.10+; the host development environment uses Python 3.14.
-- [`mise`](https://mise.jdx.dev/) installs Python and uv using `mise.toml`.
+- Python 3.10+ is supported; this checkout uses uv-managed Python 3.15.x.
+- [`mise`](https://mise.jdx.dev/) manages the latest uv using `mise.toml`.
+- uv manages Python; `.python-version` selects the 3.15 series without pinning a patch version.
 
 # Installation
 
@@ -22,14 +23,33 @@ git clone https://github.com/jamesyc/codexauthutil
 cd codexauthutil
 mise trust
 mise install
+mise exec -- uv python install --upgrade 3.15
 mise exec -- uv sync --locked
 mise exec -- uv run --locked codexauth --help
 ```
 
-`uv` installs the locked dependencies into `.venv` using mise's Python. The
-standalone `codexauth.py` launcher also works through
-`mise exec -- uv run --script codexauth.py --help`, but uses its inline dependencies
-instead of the project lockfile.
+`uv` manages the Python installation and installs project dependencies into
+`.venv`. Dependencies are declared without version pins in `pyproject.toml`.
+The tracked `uv.lock` records exact resolved versions for reproducible installs.
+Subsequent syncs reuse those versions until explicitly upgraded.
+The standalone `codexauth.py` launcher also works through
+`mise exec -- uv run --script codexauth.py --help`, using its inline dependencies
+in a separate script environment.
+
+To update uv, install the latest available Python 3.15 patch, and upgrade dependencies:
+
+```bash
+mise upgrade uv
+mise exec -- uv python install --upgrade 3.15
+mise exec -- uv sync --upgrade
+```
+
+This refreshes `uv.lock` and the environment together. Review and commit the
+lockfile changes when updating dependencies. To also update the test dependencies,
+use `mise exec -- uv sync --upgrade --extra test`.
+
+Selecting `latest` or `3.15` does not check for updates on every run; use the
+commands above to refresh existing installations.
 
 ### Option B — Install as a shell command
 

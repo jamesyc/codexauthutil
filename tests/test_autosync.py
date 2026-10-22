@@ -534,7 +534,8 @@ except SyncBusyError:
 def test_sync_has_no_watch_options(option):
     result = CliRunner().invoke(cli, ["sync", option])
     assert result.exit_code == 2
-    assert f"No such option: {option}" in result.output
+    assert "No such option" in result.output
+    assert option in result.output
 
 
 def test_local_refresh_during_publication_is_synced_on_retry(repos, monkeypatch):
